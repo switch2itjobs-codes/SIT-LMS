@@ -100,6 +100,72 @@ type AdminStudentsPageProps = {
   onlyBatchId?: string
 }
 
+type BulkFieldKey =
+  | 'stage'
+  | 'payment_status'
+  | 'gender'
+  | 'location'
+  | 'previous_job_role'
+  | 'experience_years'
+  | 'attendance_pct'
+  | 'progress_pct'
+  | 'trainer_rating'
+  | 'no_of_applications'
+  | 'no_of_interviews'
+  | 'offers_received'
+
+type BulkFieldConfig = {
+  key: BulkFieldKey
+  label: string
+  inputType: 'select' | 'text' | 'number'
+  options?: Array<{ label: string; value: string }>
+}
+
+const bulkFieldConfigs: BulkFieldConfig[] = [
+  {
+    key: 'stage',
+    label: 'Stage',
+    inputType: 'select',
+    options: [
+      { label: 'Training', value: 'training' },
+      { label: 'Trial Classes', value: 'trial_classes' },
+      { label: 'Mock Interviews', value: 'mock_interviews' },
+      { label: 'Searching for Jobs', value: 'searching_for_jobs' },
+      { label: 'Taking Interviews', value: 'taking_interviews' },
+      { label: 'Placed', value: 'placed' },
+    ],
+  },
+  {
+    key: 'payment_status',
+    label: 'Payment Status',
+    inputType: 'select',
+    options: [
+      { label: 'Pending', value: 'pending' },
+      { label: 'Partial', value: 'partial' },
+      { label: 'Paid', value: 'paid' },
+    ],
+  },
+  {
+    key: 'gender',
+    label: 'Gender',
+    inputType: 'select',
+    options: [
+      { label: 'Male', value: 'male' },
+      { label: 'Female', value: 'female' },
+      { label: 'Other', value: 'other' },
+    ],
+  },
+  { key: 'location', label: 'Location', inputType: 'text' },
+  { key: 'previous_job_role', label: 'Previous Job Role', inputType: 'text' },
+  { key: 'experience_years', label: 'Experience (years)', inputType: 'number' },
+  { key: 'attendance_pct', label: 'Attendance %', inputType: 'number' },
+  { key: 'progress_pct', label: 'Progress %', inputType: 'number' },
+  { key: 'trainer_rating', label: 'Trainer Rating', inputType: 'number' },
+  { key: 'no_of_applications', label: 'No. of Applications', inputType: 'number' },
+  { key: 'no_of_interviews', label: 'No. of Interviews', inputType: 'number' },
+  { key: 'offers_received', label: 'Offers Received', inputType: 'number' },
+]
+
 export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -156,6 +222,12 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
   const [pinnedColumns, setPinnedColumns] = useState<ColumnKey[]>(['name'])
   const [draggingColumn, setDraggingColumn] = useState<ColumnKey | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
+  const [isBulkOpen, setIsBulkOpen] = useState(false)
+  const [bulkField, setBulkField] = useState<BulkFieldKey>('stage')
+  const [bulkValue, setBulkValue] = useState('training')
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkError, setBulkError] = useState('')
   const [formSaving, setFormSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [formData, setFormData] = useState({
@@ -182,6 +254,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     startX: number
     startWidth: number
   } | null>(null)
+  const selectAllRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
@@ -202,6 +275,11 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
       setFormData((prev) => ({ ...prev, batch_id: '' }))
     }
   }, [formData.batch_id, formData.trainer_id, allBatches])
+
+  useEffect(() => {
+    const validIds = new Set(students.map((student) => student.id))
+    setSelectedStudentIds((prev) => prev.filter((id) => validIds.has(id)))
+  }, [students])
 
   useEffect(() => {
     const loadStudents = async () => {
@@ -453,6 +531,29 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     return sorted
   }, [filteredStudents, sortState])
 
+  const currentBulkConfig = useMemo(
+    () => bulkFieldConfigs.find((config) => config.key === bulkField) ?? bulkFieldConfigs[0],
+    [bulkField],
+  )
+
+  const visibleStudentIds = useMemo(
+    () => sortedStudents.map((student) => student.id),
+    [sortedStudents],
+  )
+  const selectedVisibleCount = useMemo(
+    () => visibleStudentIds.filter((id) => selectedStudentIds.includes(id)).length,
+    [selectedStudentIds, visibleStudentIds],
+  )
+  const allVisibleSelected =
+    visibleStudentIds.length > 0 && selectedVisibleCount === visibleStudentIds.length
+  const hasPartialVisibleSelection =
+    selectedVisibleCount > 0 && selectedVisibleCount < visibleStudentIds.length
+
+  useEffect(() => {
+    if (!selectAllRef.current) return
+    selectAllRef.current.indeterminate = hasPartialVisibleSelection
+  }, [hasPartialVisibleSelection])
+
   const toggleColumn = (key: ColumnKey) => {
     if (key === 'name') return
     setVisibleColumns((prev) =>
@@ -534,6 +635,97 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     }
     if (sortState.direction === 'asc') return <ArrowUp size={12} />
     return <ArrowDown size={12} />
+  }
+
+  const toggleStudentSelection = (studentId: string, checked: boolean) => {
+    setSelectedStudentIds((prev) => {
+      if (checked) {
+        if (prev.includes(studentId)) return prev
+        return [...prev, studentId]
+      }
+      return prev.filter((id) => id !== studentId)
+    })
+  }
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelectedStudentIds((prev) => {
+      if (checked) {
+        const next = new Set(prev)
+        for (const id of visibleStudentIds) next.add(id)
+        return Array.from(next)
+      }
+      const visibleSet = new Set(visibleStudentIds)
+      return prev.filter((id) => !visibleSet.has(id))
+    })
+  }
+
+  const openBulkUpdate = () => {
+    setBulkError('')
+    setBulkField('stage')
+    setBulkValue('training')
+    setIsBulkOpen(true)
+  }
+
+  const handleBulkFieldChange = (value: BulkFieldKey) => {
+    setBulkField(value)
+    const config = bulkFieldConfigs.find((field) => field.key === value)
+    if (!config) return
+    if (config.inputType === 'select' && config.options?.length) {
+      setBulkValue(config.options[0].value)
+    } else {
+      setBulkValue('')
+    }
+  }
+
+  const saveBulkUpdate = async (event: FormEvent) => {
+    event.preventDefault()
+    setBulkError('')
+
+    if (!selectedStudentIds.length) {
+      setBulkError('Select at least one student.')
+      return
+    }
+    if (!bulkValue.trim()) {
+      setBulkError('Please enter a value to update.')
+      return
+    }
+
+    let parsedValue: string | number = bulkValue.trim()
+    if (currentBulkConfig.inputType === 'number') {
+      const numberValue = Number(bulkValue)
+      if (!Number.isFinite(numberValue)) {
+        setBulkError('Please enter a valid numeric value.')
+        return
+      }
+      parsedValue = numberValue
+    }
+
+    const updatePayload = {
+      [bulkField]: parsedValue,
+    }
+
+    setBulkSaving(true)
+    const { error: updateError } = await supabase
+      .from('students')
+      .update(updatePayload)
+      .in('id', selectedStudentIds)
+
+    if (updateError) {
+      setBulkSaving(false)
+      setBulkError(updateError.message)
+      return
+    }
+
+    setStudents((prev) =>
+      prev.map((student) =>
+        selectedStudentIds.includes(student.id)
+          ? ({ ...student, [bulkField]: parsedValue } as StudentRow)
+          : student,
+      ),
+    )
+    setBulkSaving(false)
+    setIsBulkOpen(false)
+    setSelectedStudentIds([])
   }
 
   const formatStage = (value: string) => value.replaceAll('_', ' ')
@@ -659,9 +851,10 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
   const activeColumns = [...orderedPinnedKeys, ...orderedScrollableKeys]
     .map((key) => columnByKey.get(key))
     .filter((column): column is ColumnDef => Boolean(column))
+  const selectionColumnWidth = 52
 
   const pinnedLeftMap = useMemo(() => {
-    let left = 0
+    let left = selectionColumnWidth
     const result: Record<string, number> = {}
     for (const key of orderedPinnedKeys) {
       const width = columnWidths[key] ?? 120
@@ -669,7 +862,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
       left += width
     }
     return result
-  }, [orderedPinnedKeys, columnWidths])
+  }, [orderedPinnedKeys, columnWidths, selectionColumnWidth])
 
   const hiddenColumns = allColumns.filter(
     (column) => !visibleColumns.includes(column.key),
@@ -684,7 +877,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
   )
   const tableMinWidth = activeColumns.reduce(
     (sum, column) => sum + (columnWidths[column.key] ?? column.width),
-    0,
+    selectionColumnWidth,
   )
 
   const createStudent = async (event: FormEvent) => {
@@ -1061,6 +1254,23 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
             Add New Student
           </button>
         </div>
+        {selectedStudentIds.length ? (
+          <div className="bulk-actions-bar">
+            <p>{selectedStudentIds.length} students selected</p>
+            <div className="bulk-actions-right">
+              <button type="button" className="bulk-update-btn" onClick={openBulkUpdate}>
+                Bulk Update
+              </button>
+              <button
+                type="button"
+                className="bulk-clear-btn"
+                onClick={() => setSelectedStudentIds([])}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className={`panel ${onlyBatchId ? 'batch-students-panel' : ''}`}>
@@ -1075,6 +1285,19 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
               >
                 <thead className="admin-table-head">
                   <tr>
+                    <th
+                      className="selection-col-head pinned-col selection-col-cell"
+                      style={{ width: `${selectionColumnWidth}px`, left: '0px' }}
+                    >
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        className="row-select-checkbox"
+                        checked={allVisibleSelected}
+                        onChange={(event) => toggleSelectAllVisible(event.target.checked)}
+                        title="Select all visible students"
+                      />
+                    </th>
                     {activeColumns.map((column) => (
                       <th
                         key={column.key}
@@ -1125,7 +1348,26 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
                 </thead>
                 <tbody>
                   {sortedStudents.map((student) => (
-                    <tr className="admin-table-row" key={student.id}>
+                    <tr
+                      className={`admin-table-row ${
+                        selectedStudentIds.includes(student.id) ? 'is-selected' : ''
+                      }`}
+                      key={student.id}
+                    >
+                      <td
+                        className="selection-col-cell pinned-col"
+                        style={{ width: `${selectionColumnWidth}px`, left: '0px' }}
+                      >
+                        <input
+                          type="checkbox"
+                          className="row-select-checkbox"
+                          checked={selectedStudentIds.includes(student.id)}
+                          onChange={(event) =>
+                            toggleStudentSelection(student.id, event.target.checked)
+                          }
+                          title={`Select ${student.name}`}
+                        />
+                      </td>
                       {activeColumns.map((column) => (
                         <td
                           key={`${student.id}-${column.key}`}
@@ -1153,6 +1395,77 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
           </div>
         )}
       </section>
+      {isBulkOpen ? (
+        <>
+          <div className="drawer-overlay" onClick={() => !bulkSaving && setIsBulkOpen(false)} />
+          <div className="bulk-update-modal">
+            <div className="bulk-update-head">
+              <h3>Bulk Update Students</h3>
+              <button
+                type="button"
+                className="drawer-close"
+                onClick={() => !bulkSaving && setIsBulkOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form className="bulk-update-form" onSubmit={saveBulkUpdate}>
+              <p className="muted-dark">
+                Apply one field update to {selectedStudentIds.length} selected students.
+              </p>
+              <label>
+                Field
+                <select
+                  value={bulkField}
+                  onChange={(event) => handleBulkFieldChange(event.target.value as BulkFieldKey)}
+                >
+                  {bulkFieldConfigs.map((config) => (
+                    <option key={config.key} value={config.key}>
+                      {config.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                New value
+                {currentBulkConfig.inputType === 'select' ? (
+                  <select
+                    value={bulkValue}
+                    onChange={(event) => setBulkValue(event.target.value)}
+                  >
+                    {currentBulkConfig.options?.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={currentBulkConfig.inputType}
+                    value={bulkValue}
+                    onChange={(event) => setBulkValue(event.target.value)}
+                    required
+                  />
+                )}
+              </label>
+              {bulkError ? <p className="error">{bulkError}</p> : null}
+              <div className="bulk-update-actions">
+                <button
+                  type="button"
+                  className="bulk-clear-btn"
+                  onClick={() => setIsBulkOpen(false)}
+                  disabled={bulkSaving}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="bulk-update-btn" disabled={bulkSaving}>
+                  {bulkSaving ? 'Saving...' : 'Save Update'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
+      ) : null}
       {isCreateOpen ? (
         <div
           className="drawer-overlay"

@@ -114,9 +114,35 @@ label {
   padding: 16px 14px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   border-right: 1px solid #e5e7eb;
   background: #ffffff;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  box-sizing: border-box;
+  z-index: 30;
+}
+
+.student-sidebar > div:first-child {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.student-sidebar .sidebar-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.student-sidebar .sidebar-user {
+  flex-shrink: 0;
+  margin-top: 12px;
 }
 
 .brand {
@@ -435,6 +461,69 @@ label {
 .create-student-btn:hover {
   background: #1d4ed8;
   border-color: #1d4ed8;
+}
+
+.bulk-actions-bar {
+  margin-top: 10px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bulk-actions-bar p {
+  margin: 0;
+  color: #1e3a8a;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.bulk-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bulk-update-btn,
+.bulk-clear-btn {
+  border-radius: 9px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bulk-update-btn {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.bulk-update-btn:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+.bulk-clear-btn {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.bulk-clear-btn:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.bulk-update-btn:disabled,
+.bulk-clear-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .class-row,
@@ -789,6 +878,23 @@ body.theme-light .class-col {
   background: #f9fafb;
 }
 
+.selection-col-cell {
+  text-align: center;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+}
+
+.selection-col-head {
+  z-index: 10 !important;
+}
+
+.row-select-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
 .th-wrap {
   display: flex;
   align-items: center;
@@ -897,6 +1003,10 @@ body.theme-light .class-col {
   z-index: 5;
 }
 
+.admin-table-row.is-selected td {
+  background: #eff6ff;
+}
+
 .admin-table-row:first-child td {
   border-top: none;
 }
@@ -907,6 +1017,10 @@ body.theme-light .class-col {
 
 .admin-table-row:nth-child(even) td.pinned-col {
   background: #f3f4f6;
+}
+
+.admin-table-row.is-selected td.pinned-col {
+  background: #eff6ff !important;
 }
 
 .admin-table .class-title,
@@ -2344,6 +2458,66 @@ body.theme-light .class-col {
   z-index: 80;
 }
 
+.bulk-update-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, 92vw);
+  border: 1px solid #dbe3f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
+  z-index: 90;
+}
+
+.bulk-update-head {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bulk-update-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.bulk-update-form {
+  padding: 14px 16px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.bulk-update-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.bulk-update-form input,
+.bulk-update-form select {
+  border: 1px solid #dbe3f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111827;
+  padding: 9px 10px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.bulk-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .right-drawer {
   position: fixed;
   top: 0;
@@ -2473,6 +2647,28 @@ body.theme-light .class-col {
     border-right: none;
     border-bottom: 1px solid #e5e7eb;
     gap: 12px;
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    align-self: stretch;
+    z-index: auto;
+  }
+
+  .student-sidebar > div:first-child {
+    flex: initial;
+    min-height: auto;
+  }
+
+  .student-sidebar .sidebar-nav {
+    flex: initial;
+    min-height: auto;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+
+  .student-sidebar .sidebar-user {
+    margin-top: 0;
   }
 
   .stats-grid {

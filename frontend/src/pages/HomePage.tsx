@@ -23,6 +23,7 @@ type ClassSessionItem = {
   description: string | null
   starts_at: string
   ends_at: string | null
+  zoom_status: string | null
   join_url: string | null
   recording_url: string | null
   batch_id: string
@@ -130,7 +131,7 @@ export function HomePage({ session }: HomePageProps) {
           supabase
             .from('class_sessions')
             .select(
-              'id,title,description,starts_at,ends_at,join_url,recording_url,batch_id,trainer_id',
+              'id,title,description,starts_at,ends_at,zoom_status,join_url,recording_url,batch_id,trainer_id',
             )
             .in('batch_id', batchIds)
             .order('starts_at', { ascending: true }),
@@ -170,6 +171,7 @@ export function HomePage({ session }: HomePageProps) {
         description: item.description,
         starts_at: item.starts_at,
         ends_at: item.ends_at,
+        zoom_status: item.zoom_status ?? null,
         join_url: item.join_url,
         recording_url: item.recording_url,
         batch_id: item.batch_id,
@@ -245,6 +247,16 @@ export function HomePage({ session }: HomePageProps) {
   }, [myBatches])
 
   const getSessionStatus = (item: ClassSessionItem): SessionStatus => {
+    if (item.zoom_status === 'started') {
+      return 'live'
+    }
+    if (item.zoom_status === 'ended') {
+      return 'completed'
+    }
+    if (item.zoom_status === 'waiting' || item.zoom_status === 'not_started') {
+      return 'upcoming'
+    }
+
     const now = Date.now()
     const startsAt = new Date(item.starts_at).getTime()
     const endsAt = item.ends_at ? new Date(item.ends_at).getTime() : null
