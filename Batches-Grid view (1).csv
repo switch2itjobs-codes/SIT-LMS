@@ -1,0 +1,5 @@
+﻿Name,Start Date,End Date,Status,Batch Capacity,Trainer,Students,Notes,Batch Type,No. Placed,Placement %,Interviews Scheduled,No. Dropouts,Dropout %,Attendance %,Batch Rating,Total Revenue,Collected Amount,Pending Amount,Zoom Meetings
+BAMAR25/26-ASLAM-MORNING,,,Completed,1,Aslam,Vijay Kumar,,Morning,0,0%,0,0,0%,NaN,5.00,60000,0,60000,
+BAMAR30/26-SRUTHI-EVENING,,,Planned,4,Sruthi,"Habeeb Shaik,Kalyani tarun kumar kumar,Minisha Munjeti,Votturi Bhargav",,Evening,1,25%,1,0,0%,NaN,4.50,240000,90000,150000,
+BAMAR19/26-SANTOSH-EVENING,2026-03-19,2026-05-19,Active,3,Santosh,"Aldrin Mathew,Naga Kumari,Deepthi Rakesh",,Evening,0,0%,1,0,0%,34%,3.33,180000,105000,75000,Day 1
+BAMAR19/26-MADHAV-MORNING,,,Active,3,Madhav,"Prem,Esther Sebastian,Harshitha",,Morning,1,33%,0,0,0%,58%,4.67,180000,25000,155000,
