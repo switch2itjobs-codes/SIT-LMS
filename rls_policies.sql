@@ -526,6 +526,52 @@ with check (
 );
 
 -- =========================================================
+-- mock_interviews
+-- =========================================================
+drop policy if exists mock_interviews_select_scope on public.mock_interviews;
+create policy mock_interviews_select_scope
+on public.mock_interviews
+for select
+to authenticated
+using (
+  public.current_app_role() = 'admin'
+  or student_id = public.current_student_id()
+  or exists (
+    select 1
+    from public.student_batches sb
+    join public.batches b on b.id = sb.batch_id
+    where sb.student_id = mock_interviews.student_id
+      and b.trainer_id = public.current_trainer_id()
+  )
+);
+
+drop policy if exists mock_interviews_mutation_scope on public.mock_interviews;
+create policy mock_interviews_mutation_scope
+on public.mock_interviews
+for all
+to authenticated
+using (
+  public.current_app_role() = 'admin'
+  or exists (
+    select 1
+    from public.student_batches sb
+    join public.batches b on b.id = sb.batch_id
+    where sb.student_id = mock_interviews.student_id
+      and b.trainer_id = public.current_trainer_id()
+  )
+)
+with check (
+  public.current_app_role() = 'admin'
+  or exists (
+    select 1
+    from public.student_batches sb
+    join public.batches b on b.id = sb.batch_id
+    where sb.student_id = mock_interviews.student_id
+      and b.trainer_id = public.current_trainer_id()
+  )
+);
+
+-- =========================================================
 -- class_sessions
 -- =========================================================
 drop policy if exists class_sessions_select_scope on public.class_sessions;
@@ -807,6 +853,76 @@ with check (
       and b.trainer_id = public.current_trainer_id()
   )
 );
+
+-- =========================================================
+-- batch_community_messages
+-- =========================================================
+drop policy if exists batch_community_messages_select_scope on public.batch_community_messages;
+create policy batch_community_messages_select_scope
+on public.batch_community_messages
+for select
+to authenticated
+using (
+  public.current_app_role() = 'admin'
+  or exists (
+    select 1
+    from public.student_batches sb
+    where sb.batch_id = batch_community_messages.batch_id
+      and sb.student_id = public.current_student_id()
+  )
+  or exists (
+    select 1
+    from public.batches b
+    where b.id = batch_community_messages.batch_id
+      and b.trainer_id = public.current_trainer_id()
+  )
+);
+
+drop policy if exists batch_community_messages_insert_scope on public.batch_community_messages;
+create policy batch_community_messages_insert_scope
+on public.batch_community_messages
+for insert
+to authenticated
+with check (
+  public.current_app_role() = 'admin'
+  or (
+    sender_role = public.current_app_role()
+    and (
+      (public.current_app_role() = 'student'
+        and exists (
+          select 1
+          from public.student_batches sb
+          where sb.batch_id = batch_community_messages.batch_id
+            and sb.student_id = public.current_student_id()
+        )
+      )
+      or
+      (public.current_app_role() = 'trainer'
+        and exists (
+          select 1
+          from public.batches b
+          where b.id = batch_community_messages.batch_id
+            and b.trainer_id = public.current_trainer_id()
+        )
+      )
+    )
+  )
+);
+
+drop policy if exists batch_community_messages_update_admin_only on public.batch_community_messages;
+create policy batch_community_messages_update_admin_only
+on public.batch_community_messages
+for update
+to authenticated
+using (public.current_app_role() = 'admin')
+with check (public.current_app_role() = 'admin');
+
+drop policy if exists batch_community_messages_delete_admin_only on public.batch_community_messages;
+create policy batch_community_messages_delete_admin_only
+on public.batch_community_messages
+for delete
+to authenticated
+using (public.current_app_role() = 'admin');
 
 -- =========================================================
 -- zoom_webhook_events

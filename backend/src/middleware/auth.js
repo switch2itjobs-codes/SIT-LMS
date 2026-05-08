@@ -5,6 +5,14 @@ function parseBearerToken(header = '') {
   return header.slice(7).trim()
 }
 
+function resolveRequestRole(user) {
+  const raw = user.app_metadata?.role ?? user.user_metadata?.role
+  if (raw === 'admin' || raw === 'trainer' || raw === 'student') {
+    return raw
+  }
+  return 'student'
+}
+
 export async function requireAuth(req, res, next) {
   try {
     const token = parseBearerToken(req.headers.authorization)
@@ -17,7 +25,7 @@ export async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Invalid or expired token.' })
     }
 
-    const role = data.user.app_metadata?.role ?? 'student'
+    const role = resolveRequestRole(data.user)
     req.auth = {
       token,
       user: data.user,

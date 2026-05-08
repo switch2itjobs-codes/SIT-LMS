@@ -35,7 +35,7 @@ async function getClassSessionByZoomIdentifiers(meetingId, meetingUuid) {
   if (meetingId) {
     const { data: byMeetingId, error: byMeetingIdError } = await supabaseAdmin
       .from('class_sessions')
-      .select('id,zoom_meeting_id,zoom_meeting_uuid,batch_id')
+      .select('id,zoom_meeting_id,zoom_meeting_uuid,batch_id,trainer_id,zoom_host_user_id')
       .eq('zoom_meeting_id', String(meetingId))
       .limit(1)
       .maybeSingle()
@@ -46,7 +46,7 @@ async function getClassSessionByZoomIdentifiers(meetingId, meetingUuid) {
   if (meetingUuid) {
     const { data: byUuid, error: byUuidError } = await supabaseAdmin
       .from('class_sessions')
-      .select('id,zoom_meeting_id,zoom_meeting_uuid,batch_id')
+      .select('id,zoom_meeting_id,zoom_meeting_uuid,batch_id,trainer_id,zoom_host_user_id')
       .eq('zoom_meeting_uuid', meetingUuid)
       .limit(1)
       .maybeSingle()
@@ -89,18 +89,55 @@ async function upsertWebhookEvent(event, payload, signatureValid) {
   if (error) throw error
 }
 
-async function syncParticipantsForSession(classSessionId, zoomMeetingId) {
+async function syncParticipantsForSession(
+  classSessionId,
+  zoomMeetingId,
+  trainerId = null,
+  zoomHostUserId = null,
+) {
   const participants = await getMeetingParticipants(zoomMeetingId)
-  const rows = participants.map((participant) => ({
+  let trainerEmail = null
+  if (trainerId) {
+    const { data: trainer, error: trainerError } = await supabaseAdmin
+      .from('trainers')
+      .select('email')
+      .eq('id', trainerId)
+      .maybeSingle()
+    if (trainerError) throw trainerError
+    trainerEmail = trainer?.email
+      ? String(trainer.email).trim().toLowerCase()
+      : null
+  }
+  const filteredParticipants = participants.filter((participant) => {
+    const participantZoomUserId = String(
+      participant.id ?? participant.user_id ?? '',
+    )
+      .trim()
+      .toLowerCase()
+    const normalizedHostZoomUserId = zoomHostUserId
+      ? String(zoomHostUserId).trim().toLowerCase()
+      : null
+    if (
+      normalizedHostZoomUserId &&
+      participantZoomUserId &&
+      participantZoomUserId === normalizedHostZoomUserId
+    ) {
+      return false
+    }
+    if (!trainerEmail) return true
+    const participantEmail = String(participant.user_email ?? '')
+      .trim()
+      .toLowerCase()
+    return !participantEmail || participantEmail !== trainerEmail
+  })
+  const rows = filteredParticipants.map((participant) => ({
     class_session_id: classSessionId,
     zoom_user_id: participant.id ? String(participant.id) : null,
     user_email: participant.user_email ?? null,
     user_name: participant.name ?? null,
     join_time: participant.join_time ?? null,
     leave_time: participant.leave_time ?? null,
-    duration_seconds: participant.duration
-      ? Math.round(Number(participant.duration) * 60)
-      : null,
+    duration_seconds: participant.duration ? Math.round(Number(participant.duration)) : null,
     source: 'zoom_report',
   }))
 
@@ -240,7 +277,12 @@ export async function processZoomWebhookEvent(event, body, signatureValid) {
       })
       .eq('id', classSession.id)
     if (error) throw error
-    await syncParticipantsForSession(classSession.id, String(meetingId))
+    await syncParticipantsForSession(
+      classSession.id,
+      String(meetingId),
+      classSession.trainer_id ?? null,
+      classSession.zoom_host_user_id ?? null,
+    )
   }
 
   if (event === 'recording.completed') {

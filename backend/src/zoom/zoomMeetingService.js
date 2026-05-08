@@ -15,6 +15,8 @@ export async function createMeeting(hostUserId, classData) {
       auto_recording: 'cloud',
       join_before_host: false,
       mute_upon_entry: true,
+      approval_type: 0,
+      registration_type: 1,
     },
   }
 
@@ -22,6 +24,29 @@ export async function createMeeting(hostUserId, classData) {
     'POST',
     `/users/${encodeURIComponent(hostUserId)}/meetings`,
     payload,
+  )
+}
+
+export async function createMeetingRegistrant(
+  zoomMeetingId,
+  { email, firstName, lastName },
+) {
+  const payload = {
+    email,
+    first_name: firstName,
+    last_name: lastName,
+  }
+  return await zoomRequest(
+    'POST',
+    `/meetings/${encodeURIComponent(zoomMeetingId)}/registrants`,
+    payload,
+  )
+}
+
+export async function listMeetingRegistrants(zoomMeetingId, status = 'approved') {
+  return await zoomRequest(
+    'GET',
+    `/meetings/${encodeURIComponent(zoomMeetingId)}/registrants?page_size=300&status=${encodeURIComponent(status)}`,
   )
 }
 

@@ -1,28 +1,75 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
   Bell,
+  Briefcase,
   CalendarDays,
+  CheckCircle2,
+  Clock3,
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Copy,
   FileText,
   LayoutDashboard,
   Link as LinkIcon,
-  Plus,
-  Search,
+  Megaphone,
+  MoreVertical,
+  Paperclip,
+  Pencil,
+  PlayCircle,
+  Play,
+  Upload,
+  Trash2,
   Users,
+  UserCheck,
   Video,
+  Star,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { AdminStudentsPage } from './AdminStudentsPage'
+import { BatchCommunityChat } from '../components/BatchCommunityChat/BatchCommunityChat'
 import {
+  getMeetingRecordings,
   getZoomHosts,
-  getJoinUrl,
   getMeetingParticipantsReport,
   getStartUrl,
   scheduleClass,
 } from '../lib/zoomApi'
+
+const TOPIC_OPTION_ADD_NEW = '__add_new_topic__'
+const TOPIC_OPTION_OTHERS = '__others__'
+
+const trainerTopicOptions = [
+  'Introduction & Training Roadmap',
+  'Pre-Project Activities',
+  'SDLC - Initiation Phase',
+  'SDLC - Project Planning',
+  'Requirements Gathering (Elicitation Techniques)',
+  'Requirement Documentation (RTM, BRD, FRD)',
+  'Project & Requirements Revision',
+  'Requirement Analysis (GAP, SMART, MoSCoW)',
+  'Stakeholder Management & RACI Matrix',
+  'Applications Usage Assignment',
+  'Resume Project Conversion',
+  'Resume Review & Corrections',
+  'Resume Finalization & Upload',
+  'Agile & Scrum Framework',
+  'Jira & User Stories',
+  'Agile, Scrum & Jira Revision',
+  'Agile & Jira Practical Preparation',
+  'Naukri & Resume Analysis',
+  'Types of Requirements',
+  'SDLC Phases 3 & 4',
+  'SDLC Phase 5',
+  'UML Diagrams',
+  'Change Request Handling',
+  'Interview Preparation',
+  'DBMS Fundamentals',
+  'SQL Basics',
+  'SQL Intermediate',
+  'SQL Advanced & Revision',
+] as const
 
 export type BatchDetailTab =
   | 'overview'
@@ -30,12 +77,16 @@ export type BatchDetailTab =
   | 'students'
   | 'schedule'
   | 'announcements'
+  | 'community'
   | 'assignments'
 
 type AdminBatchDetailPageProps = {
   batchId: string
   initialBatchCode?: string
   onBack: () => void
+  onOpenCreateClass?: () => void
+  onOpenAssignment?: (assignmentId: string, batchId: string) => void
+  onOpenClassDetail?: (classSessionId: string) => void
   initialTab?: BatchDetailTab
   onTabChange?: (tab: BatchDetailTab) => void
 }
@@ -50,12 +101,13 @@ type BatchRecord = {
   batch_capacity: number
   trainer_id: string | null
   notes: string | null
-  trainers: { trainer_name: string } | null
+  trainers: { trainer_name: string; email: string | null } | null
 }
 
 type ClassSessionRow = {
   id: string
   title: string
+  description: string | null
   starts_at: string
   ends_at: string | null
   join_url: string | null
@@ -81,6 +133,13 @@ type AnnouncementRow = {
   body: string
   is_important: boolean
   published_at: string
+  attachment_url: string | null
+}
+
+type AnnouncementReactionRow = {
+  announcement_id: string
+  student_id: string
+  reaction_type: 'thumbs_up' | 'fire' | 'clap' | 'heart'
 }
 
 type SyllabusItemType = 'live_class' | 'document' | 'class_upload'
@@ -99,6 +158,114 @@ type SyllabusSection = {
   items: SyllabusItem[]
 }
 
+type ProgramWeek = {
+  week: number
+  dayRange: string
+  title: string
+  topics: string[]
+}
+
+const PROGRAM_WEEKS: ProgramWeek[] = [
+  {
+    week: 1,
+    dayRange: 'Days 1 - 3',
+    title: 'Introduction & Foundation',
+    topics: [
+      'Introduction & Roadmap',
+      'Pre-Project Activities',
+      'SDLC Phase 1 - Initiation',
+      'Project Planning',
+    ],
+  },
+  {
+    week: 2,
+    dayRange: 'Days 4 - 8',
+    title: 'Requirements Engineering',
+    topics: [
+      'Requirements Gathering',
+      'Documentation (RTM, BRD, FRD)',
+      'Revision',
+      'Requirement Analysis',
+    ],
+  },
+  {
+    week: 3,
+    dayRange: 'Days 9 - 13',
+    title: 'Stakeholders & Resume Building',
+    topics: [
+      'Stakeholder Management',
+      'Assignment',
+      'Resume Building',
+      'Review & Corrections',
+    ],
+  },
+  {
+    week: 4,
+    dayRange: 'Days 14 - 18',
+    title: 'Agile, Jira & Practical',
+    topics: [
+      'Agile & Scrum',
+      'Jira',
+      'Practical Preparation',
+      'Resume Feedback',
+    ],
+  },
+  {
+    week: 5,
+    dayRange: 'Days 19 - 23',
+    title: 'Advanced BA Concepts',
+    topics: [
+      'Types of Requirements',
+      'SDLC Phases',
+      'UML Diagrams',
+      'CR Handling',
+    ],
+  },
+  {
+    week: 6,
+    dayRange: 'Days 24 - 28',
+    title: 'Technical Skills & SQL',
+    topics: ['DBMS Basics', 'SQL 1', 'SQL 2', 'SQL Revision'],
+  },
+  {
+    week: 7,
+    dayRange: 'Days 29 - 33',
+    title: 'Project Presentations & Feedback',
+    topics: ['Project Presentations (Daily Feedback)'],
+  },
+  {
+    week: 8,
+    dayRange: 'Days 34 - 38',
+    title: 'Final Presentations & Review',
+    topics: ['Final Presentations + Feedback'],
+  },
+]
+
+type AssignmentSubmissionType = 'file_upload' | 'text_answer' | 'both'
+
+type BatchAssignmentRow = {
+  id: string
+  batch_id: string
+  class_session_id: string | null
+  title: string
+  description: string | null
+  attachment_url: string | null
+  due_at: string
+  max_marks: number | null
+  submission_type: AssignmentSubmissionType
+  assign_to_all: boolean
+  target_student_ids: string[] | null
+  created_at: string
+  updated_at: string
+}
+
+type AssignmentSubmissionRow = {
+  assignment_id: string
+  submitted_at: string | null
+  marks: number | null
+  feedback: string | null
+}
+
 const TAB_ITEMS: {
   id: BatchDetailTab
   label: string
@@ -109,12 +276,9 @@ const TAB_ITEMS: {
   { id: 'students', label: 'Students', icon: <Users size={15} /> },
   { id: 'schedule', label: 'Schedule', icon: <CalendarDays size={15} /> },
   { id: 'announcements', label: 'Announcements', icon: <Bell size={15} /> },
+  { id: 'community', label: 'Community', icon: <Users size={15} /> },
   { id: 'assignments', label: 'Assignments', icon: <ClipboardList size={15} /> },
 ]
-
-function formatLabel(value: string) {
-  return value.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 function formatDateTime(iso: string) {
   try {
@@ -143,51 +307,130 @@ function formatDateOnly(value: string | null) {
   }
 }
 
-function batchStatusPillClass(status: string) {
-  switch (status) {
-    case 'active':
-      return 'batch-status-pill batch-status-active'
-    case 'planned':
-      return 'batch-status-pill batch-status-planned'
-    case 'completed':
-      return 'batch-status-pill batch-status-completed'
-    case 'cancelled':
-      return 'batch-status-pill batch-status-cancelled'
-    default:
-      return 'batch-status-pill batch-status-planned'
+function formatMonthShort(iso: string) {
+  return new Date(iso).toLocaleDateString([], { month: 'short' })
+}
+
+function hasClassAttachment(description: string | null) {
+  if (!description) return false
+  const value = description.trim().toLowerCase()
+  return (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('www.')
+  )
+}
+
+function getClassAttachmentUrl(description: string | null) {
+  if (!description) return null
+  const trimmed = description.trim()
+  if (!trimmed) return null
+  if (trimmed.toLowerCase().startsWith('www.')) {
+    return `https://${trimmed}`
+  }
+  return hasClassAttachment(trimmed) ? trimmed : null
+}
+
+function formatTimeOnly(iso: string) {
+  try {
+    return new Date(iso).toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
   }
 }
 
-function isSessionLive(s: ClassSessionRow, now: Date): boolean {
-  if (s.zoom_status === 'started') {
-    if (s.ends_at && now.getTime() > new Date(s.ends_at).getTime()) return false
-    return true
+function formatSessionTimeRange(startsAt: string, endsAt: string | null) {
+  const startLabel = formatTimeOnly(startsAt)
+  if (endsAt) {
+    return `${startLabel} - ${formatTimeOnly(endsAt)}`
   }
-  if (s.zoom_status === 'ended' || s.zoom_status === 'cancelled') return false
+  const fallbackEnd = new Date(new Date(startsAt).getTime() + 60 * 60 * 1000).toISOString()
+  return `${startLabel} - ${formatTimeOnly(fallbackEnd)}`
+}
+
+function toLocalDateInputValue(iso: string) {
+  const date = new Date(iso)
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function toLocalTimeInputValue(iso: string) {
+  const date = new Date(iso)
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+function isSessionLive(s: ClassSessionRow, _now: Date): boolean {
+  // Live state must come from Zoom webhook/session status only.
+  return s.zoom_status === 'started'
+}
+
+function getSessionStateLabel(s: ClassSessionRow, now: Date) {
+  if (s.zoom_status === 'started') return 'Live'
+  if (s.zoom_status === 'ended') return 'Completed'
+  if (s.zoom_status === 'cancelled') return 'Cancelled'
   const start = new Date(s.starts_at).getTime()
-  const t = now.getTime()
-  if (t < start) return false
-  if (s.ends_at) return t <= new Date(s.ends_at).getTime()
-  return true
+  const fallbackEnd = start + 60 * 60 * 1000
+  const end = s.ends_at ? new Date(s.ends_at).getTime() : fallbackEnd
+  if (now.getTime() < start) return 'Upcoming'
+  if (now.getTime() > end) return 'Not Conducted / Cancelled'
+  return 'Upcoming'
 }
 
 function SessionRows({
   items,
   variant,
   onStart,
-  onJoin,
   onOpenRecording,
   onReport,
+  assignmentCountBySessionId,
+  attendanceCountBySessionId,
+  assignmentsBySessionId,
+  pendingFeedbackBySessionId,
+  onEditSession,
+  onAddAssignment,
+  onViewAssignmentReports,
+  onCopyJoinUrl,
+  onDeleteSession,
+  onOpenClassDetail,
   loadingMeetingId,
 }: {
   items: ClassSessionRow[]
   variant: 'live' | 'upcoming' | 'past'
   onStart: (meetingId: string) => void
-  onJoin: (meetingId: string) => void
   onOpenRecording: (session: ClassSessionRow) => void
   onReport: (meetingId: string) => void
+  assignmentCountBySessionId: Record<string, number>
+  attendanceCountBySessionId: Record<string, number>
+  assignmentsBySessionId: Record<string, BatchAssignmentRow[]>
+  pendingFeedbackBySessionId: Record<string, number>
+  onEditSession: (session: ClassSessionRow) => void
+  onAddAssignment: (session: ClassSessionRow) => void
+  onViewAssignmentReports: (session: ClassSessionRow) => void
+  onCopyJoinUrl: (session: ClassSessionRow) => void
+  onDeleteSession: (session: ClassSessionRow) => void
+  onOpenClassDetail?: (session: ClassSessionRow) => void
   loadingMeetingId: string | null
 }) {
+  const [openMenuSessionId, setOpenMenuSessionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!openMenuSessionId) return
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.class-card-menu-wrap')) return
+      setOpenMenuSessionId(null)
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [openMenuSessionId])
+
   if (items.length === 0) {
     const empty =
       variant === 'live'
@@ -199,69 +442,198 @@ function SessionRows({
   }
 
   return (
-    <ul className="live-class-card-list">
-      {items.map((s) => (
-        <li key={s.id} className="live-class-card-row">
-          <div>
-            <p className="batch-session-title">{s.title}</p>
-            <p className="muted-dark batch-session-meta">
-              {formatDateTime(s.starts_at)}
-            </p>
-          </div>
-          <div className="live-class-card-actions">
-            {s.zoom_meeting_id && variant !== 'past' ? (
-              <button
-                type="button"
-                className="batch-link-btn"
-                disabled={loadingMeetingId === s.zoom_meeting_id}
-                onClick={() => onStart(s.zoom_meeting_id as string)}
+    <tbody>
+      {items.map((s) => {
+        const now = new Date()
+        const stateLabel = getSessionStateLabel(s, now)
+        const assignmentCount = assignmentCountBySessionId[s.id] ?? 0
+        const pendingFeedbackCountForSession = pendingFeedbackBySessionId[s.id] ?? 0
+        const attendedCountForSession = attendanceCountBySessionId[s.id] ?? 0
+        const classAssignments = assignmentsBySessionId[s.id] ?? []
+        const classAttachmentUrl = getClassAttachmentUrl(s.description)
+        const attachmentUrls = [
+          ...classAssignments
+            .map((item) => item.attachment_url)
+            .filter((url): url is string => Boolean(url)),
+          ...(classAttachmentUrl ? [classAttachmentUrl] : []),
+        ]
+        const totalAttachmentCount = attachmentUrls.length
+        const statusTextClass =
+          stateLabel === 'Completed'
+            ? 'is-completed'
+            : stateLabel === 'Cancelled'
+              ? 'is-cancelled'
+              : 'is-not-conducted'
+        return (
+          <tr key={s.id} className={stateLabel === 'Live' ? 'is-live' : ''}>
+            <td>
+              <div
+                className={
+                  variant === 'past'
+                    ? 'student-classes-table-date is-neutral'
+                    : `student-classes-table-date weekday-${new Date(s.starts_at).getDay()}`
+                }
               >
-                Start
-              </button>
-            ) : null}
-            {s.zoom_meeting_id && variant !== 'past' ? (
-              <button
-                type="button"
-                className="batch-link-btn"
-                disabled={loadingMeetingId === s.zoom_meeting_id}
-                onClick={() => onJoin(s.zoom_meeting_id as string)}
-              >
-                Join
-              </button>
-            ) : variant !== 'past' && s.join_url ? (
-              <a className="batch-link" href={s.join_url} target="_blank" rel="noreferrer">
-                Join
-              </a>
-            ) : null}
+                <span>{new Date(s.starts_at).toLocaleDateString([], { weekday: 'short' })}</span>
+                <strong>{new Date(s.starts_at).getDate()}</strong>
+                <small>{formatMonthShort(s.starts_at)}</small>
+              </div>
+            </td>
+            <td>
+              {onOpenClassDetail ? (
+                <button
+                  type="button"
+                  className="admin-class-topic-link"
+                  onClick={() => onOpenClassDetail(s)}
+                >
+                  {s.title}
+                </button>
+              ) : (
+                <p className="student-classes-topic">{s.title}</p>
+              )}
+            </td>
             {variant === 'past' ? (
-              <button
-                type="button"
-                className="batch-link-btn"
-                disabled={!s.recording_url}
-                onClick={() => onOpenRecording(s)}
-              >
-                {s.recording_url
-                  ? 'Recording'
-                  : s.recording_status === 'processing' ||
-                      s.recording_status === 'pending'
-                    ? 'Processing'
-                    : 'Recording'}
-              </button>
+              <>
+                <td>
+                  <span className={`class-status-text ${statusTextClass}`}>{stateLabel}</span>
+                </td>
+                <td>
+                  {attendedCountForSession > 0 ? (
+                    <span className="student-classes-attendance-cell">
+                      <UserCheck size={14} /> {attendedCountForSession}
+                    </span>
+                  ) : (
+                    '-'
+                  )}
+                </td>
+              </>
             ) : null}
-            {s.zoom_meeting_id && variant === 'past' ? (
-              <button
-                type="button"
-                className="batch-link-btn"
-                disabled={loadingMeetingId === s.zoom_meeting_id}
-                onClick={() => onReport(s.zoom_meeting_id as string)}
-              >
-                Report
-              </button>
-            ) : null}
-          </div>
-        </li>
-      ))}
-    </ul>
+            <td>
+              {totalAttachmentCount > 0 ? (
+                <button
+                  type="button"
+                  className="student-classes-attachment-btn"
+                  onClick={() => window.open(attachmentUrls[0], '_blank', 'noopener,noreferrer')}
+                >
+                  <LinkIcon size={13} /> {totalAttachmentCount} {totalAttachmentCount === 1 ? 'File' : 'Files'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="student-classes-attachment-btn"
+                  onClick={() => onEditSession(s)}
+                >
+                  <ClipboardList size={13} /> Add Attachment
+                </button>
+              )}
+            </td>
+        {variant !== 'past' ? (
+          <td className="student-classes-time-cell">{formatSessionTimeRange(s.starts_at, s.ends_at)}</td>
+        ) : null}
+            <td>
+              <div className="student-classes-actions">
+                {variant !== 'past' && s.zoom_meeting_id ? (
+                  <button
+                    type="button"
+                    className="join"
+                    disabled={loadingMeetingId === s.zoom_meeting_id}
+                    onClick={() => onStart(s.zoom_meeting_id as string)}
+                  >
+                    <PlayCircle size={12} /> Start Class
+                  </button>
+                ) : null}
+                {assignmentCount > 0 ? (
+                  <button
+                    type="button"
+                    className="feedback"
+                    onClick={() => onViewAssignmentReports(s)}
+                  >
+                    <ClipboardList size={12} /> Give Feedback ({pendingFeedbackCountForSession})
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="assignment"
+                    onClick={() => onAddAssignment(s)}
+                  >
+                    <ClipboardList size={12} /> Add Assignment
+                  </button>
+                )}
+                <div className="class-card-menu-wrap">
+                  <button
+                    type="button"
+                    className="calendar class-card-menu-btn"
+                    onClick={() => setOpenMenuSessionId((prev) => (prev === s.id ? null : s.id))}
+                  >
+                    <MoreVertical size={12} />
+                  </button>
+                  {openMenuSessionId === s.id ? (
+                    <div className="class-card-menu">
+                      <button
+                        type="button"
+                        disabled={variant === 'live' || !s.join_url}
+                        onClick={() => {
+                          onCopyJoinUrl(s)
+                          setOpenMenuSessionId(null)
+                        }}
+                      >
+                        <Copy size={14} />
+                        Copy Join URL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onEditSession(s)
+                          setOpenMenuSessionId(null)
+                        }}
+                      >
+                        <Pencil size={14} />
+                        Edit / Reschedule Class
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!s.zoom_meeting_id}
+                        onClick={() => {
+                          if (s.zoom_meeting_id) onReport(s.zoom_meeting_id)
+                          setOpenMenuSessionId(null)
+                        }}
+                      >
+                        <ClipboardList size={14} />
+                        Attendance Report
+                      </button>
+                      {variant === 'past' ? (
+                        <button
+                          type="button"
+                          disabled={!s.recording_url && !s.zoom_meeting_id}
+                          onClick={() => {
+                            onOpenRecording(s)
+                            setOpenMenuSessionId(null)
+                          }}
+                        >
+                          <Video size={14} />
+                          View Recording
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => {
+                          onDeleteSession(s)
+                          setOpenMenuSessionId(null)
+                        }}
+                      >
+                        <Trash2 size={14} />
+                        Delete Class
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </td>
+          </tr>
+        )
+      })}
+    </tbody>
   )
 }
 
@@ -269,24 +641,50 @@ export function AdminBatchDetailPage({
   batchId,
   initialBatchCode,
   onBack,
+  onOpenAssignment,
+  onOpenClassDetail,
   initialTab = 'overview',
   onTabChange,
 }: AdminBatchDetailPageProps) {
   const [activeTab, setActiveTab] = useState<BatchDetailTab>(initialTab)
-  const [liveSearch, setLiveSearch] = useState('')
-  const [liveFilter, setLiveFilter] = useState<
-    'all' | 'join_link' | 'recording' | 'no_links'
-  >('all')
+  const [adminUserId, setAdminUserId] = useState<string | null>(null)
+  const [communityLastSeenAt, setCommunityLastSeenAt] = useState<string | null>(null)
+  const [unreadCommunityCount, setUnreadCommunityCount] = useState(0)
+  const liveSearch = ''
+  const liveFilter: 'all' | 'join_link' | 'recording' | 'no_links' = 'all'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const [batch, setBatch] = useState<BatchRecord | null>(null)
   const [sessions, setSessions] = useState<ClassSessionRow[]>([])
-  const [roster, setRoster] = useState<StudentInBatch[]>([])
+  const [assignments, setAssignments] = useState<BatchAssignmentRow[]>([])
+  const [_assignmentSubmissionCountBySessionId, setAssignmentSubmissionCountBySessionId] =
+    useState<Record<string, number>>({})
+  const [pendingFeedbackBySessionId, setPendingFeedbackBySessionId] =
+    useState<Record<string, number>>({})
+  const [attendanceCountBySessionId, setAttendanceCountBySessionId] = useState<
+    Record<string, number>
+  >({})
+  const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0)
+  const [submittedAssignmentCount, setSubmittedAssignmentCount] = useState(0)
+  const [upcomingClassesExpanded, setUpcomingClassesExpanded] = useState(false)
+  const [pastClassesExpanded, setPastClassesExpanded] = useState(false)
+  const [assignmentPage, setAssignmentPage] = useState(1)
+  const [assignmentSubmissions, setAssignmentSubmissions] = useState<AssignmentSubmissionRow[]>([])
+  const [openAssignmentMenuId, setOpenAssignmentMenuId] = useState<string | null>(null)
   const [announcements, setAnnouncements] = useState<AnnouncementRow[]>([])
+  const [announcementReactions, setAnnouncementReactions] = useState<AnnouncementReactionRow[]>([])
   const [avgProgress, setAvgProgress] = useState<number | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [expandedScheduleWeeks, setExpandedScheduleWeeks] = useState<number[]>([1, 2, 3, 4])
   const [scheduleBusy, setScheduleBusy] = useState(false)
+  const [classAttachmentFile, setClassAttachmentFile] = useState<File | null>(null)
+  const [assignmentAttachmentFile, setAssignmentAttachmentFile] = useState<File | null>(null)
+  const [assignmentAttachmentDragOver, setAssignmentAttachmentDragOver] = useState(false)
+  const classAttachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const assignmentAttachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const [scheduleTopicOpen, setScheduleTopicOpen] = useState(false)
+  const scheduleTopicBoxRef = useRef<HTMLDivElement | null>(null)
   const [actionBusyMeetingId, setActionBusyMeetingId] = useState<string | null>(
     null,
   )
@@ -315,25 +713,136 @@ export function AdminBatchDetailPage({
     isImportant: false,
   })
   const [announcementSaving, setAnnouncementSaving] = useState(false)
-  const [syllabusSections, setSyllabusSections] = useState<SyllabusSection[]>([])
-  const [expandedSectionIds, setExpandedSectionIds] = useState<string[]>([])
-  const [sectionFormOpen, setSectionFormOpen] = useState(false)
-  const [sectionTitle, setSectionTitle] = useState('')
-  const [activeItemSectionId, setActiveItemSectionId] = useState<string | null>(null)
-  const [itemForm, setItemForm] = useState({
-    type: 'live_class' as SyllabusItemType,
+  const [announceMessageFocused, setAnnounceMessageFocused] = useState(false)
+  const [announcementToast, setAnnouncementToast] = useState('')
+  const [announcementAttachmentFile, setAnnouncementAttachmentFile] = useState<File | null>(null)
+  const announcementAttachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null)
+  const [editingAnnouncementForm, setEditingAnnouncementForm] = useState({
     title: '',
-    url: '',
-    classSessionId: '',
+    body: '',
   })
+  const [announcementActionId, setAnnouncementActionId] = useState<string | null>(null)
+  const [syllabusSections, setSyllabusSections] = useState<SyllabusSection[]>([])
   const [scheduleForm, setScheduleForm] = useState({
-    topic: '',
+    classSessionId: '',
+    topicSelection: '',
+    customTopic: '',
     date: '',
     time: '',
     duration: 60,
     hostUserId: '',
     attachmentUrl: '',
+    addAssignment: false,
+    assignmentId: '',
+    assignmentTitle: '',
+    assignmentDescription: '',
+    assignmentAttachmentUrl: '',
+    assignmentDueDate: '',
+    assignmentDueTime: '',
+    assignmentMaxMarks: '',
+    assignmentSubmissionType: 'both' as AssignmentSubmissionType,
+    assignmentAssignToAll: true,
+    assignmentStudentIds: [] as string[],
   })
+  const scheduleTopicValue =
+    scheduleForm.topicSelection === TOPIC_OPTION_ADD_NEW ||
+    scheduleForm.topicSelection === TOPIC_OPTION_OTHERS
+      ? scheduleForm.customTopic
+      : scheduleForm.topicSelection
+  const filteredScheduleTopics = useMemo(() => {
+    const query = scheduleTopicValue.trim().toLowerCase()
+    if (!query) return [...trainerTopicOptions]
+    return trainerTopicOptions.filter((topic) =>
+      topic.toLowerCase().includes(query),
+    )
+  }, [scheduleTopicValue])
+  const communityStorageKey = useMemo(
+    () => `admin-community-last-seen:${adminUserId ?? 'unknown'}:${batchId}`,
+    [adminUserId, batchId],
+  )
+
+  const markCommunityAsRead = () => {
+    const nowIso = new Date().toISOString()
+    setCommunityLastSeenAt(nowIso)
+    setUnreadCommunityCount(0)
+    localStorage.setItem(communityStorageKey, nowIso)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void supabase.auth.getUser().then(({ data }) => {
+      if (cancelled) return
+      setAdminUserId(data.user?.id ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const saved = localStorage.getItem(communityStorageKey)
+    setCommunityLastSeenAt(saved)
+  }, [communityStorageKey])
+
+  useEffect(() => {
+    const refreshUnread = async () => {
+      const { data, error: msgError } = await supabase
+        .from('batch_community_messages')
+        .select('created_at,sender_role')
+        .eq('batch_id', batchId)
+        .order('created_at', { ascending: false })
+        .limit(400)
+
+      if (msgError) return
+      const rows = data ?? []
+      if (!rows.length) {
+        setUnreadCommunityCount(0)
+        return
+      }
+
+      const seenTs = communityLastSeenAt ? new Date(communityLastSeenAt).getTime() : 0
+      const unread = rows.filter((row) => {
+        const createdTs = new Date(row.created_at).getTime()
+        if (!Number.isFinite(createdTs) || createdTs <= seenTs) return false
+        // Admin messages authored from this screen are read instantly because tab is open.
+        return true
+      }).length
+
+      setUnreadCommunityCount(unread)
+    }
+
+    void refreshUnread()
+
+    const channel = supabase
+      .channel(`admin_community_unread:${batchId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'batch_community_messages',
+          filter: `batch_id=eq.${batchId}`,
+        },
+        () => {
+          if (activeTab === 'community') {
+            markCommunityAsRead()
+          } else {
+            void refreshUnread()
+          }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [activeTab, batchId, communityLastSeenAt, communityStorageKey])
+
+  useEffect(() => {
+    if (activeTab !== 'community') return
+    markCommunityAsRead()
+  }, [activeTab, batchId])
 
   useEffect(() => {
     const load = async () => {
@@ -343,7 +852,7 @@ export function AdminBatchDetailPage({
       const { data: batchRow, error: batchError } = await supabase
         .from('batches')
         .select(
-          'id,batch_code,status,batch_type,start_date,end_date,batch_capacity,trainer_id,notes,trainers(trainer_name)',
+          'id,batch_code,status,batch_type,start_date,end_date,batch_capacity,trainer_id,notes,trainers(trainer_name,email)',
         )
         .eq('id', batchId)
         .maybeSingle()
@@ -355,7 +864,10 @@ export function AdminBatchDetailPage({
       }
 
       const { trainers: trainerRaw, ...batchRest } = batchRow as BatchRecord & {
-        trainers: { trainer_name: string } | { trainer_name: string }[] | null
+        trainers:
+          | { trainer_name: string; email: string | null }
+          | { trainer_name: string; email: string | null }[]
+          | null
       }
       const trainersSingle = Array.isArray(trainerRaw)
         ? trainerRaw[0] ?? null
@@ -374,7 +886,7 @@ export function AdminBatchDetailPage({
         supabase
           .from('class_sessions')
           .select(
-            'id,title,starts_at,ends_at,join_url,recording_url,zoom_meeting_id,zoom_status,zoom_password,recording_status',
+            'id,title,description,starts_at,ends_at,join_url,recording_url,zoom_meeting_id,zoom_status,zoom_password,recording_status',
           )
           .eq('batch_id', batchId)
           .order('starts_at', { ascending: true }),
@@ -385,7 +897,7 @@ export function AdminBatchDetailPage({
           .eq('is_active', true),
         supabase
           .from('announcements')
-          .select('id,title,body,is_important,published_at')
+          .select('id,title,body,is_important,published_at,attachment_url')
           .eq('batch_id', batchId)
           .order('published_at', { ascending: false }),
       ])
@@ -402,6 +914,142 @@ export function AdminBatchDetailPage({
       }
 
       setSessions(sessionRows ?? [])
+
+      const sessionIdList = (sessionRows ?? []).map((s) => s.id)
+      if (sessionIdList.length) {
+        const batchStudentEmails = new Set<string>()
+        for (const sbRow of sbRows ?? []) {
+          const studentRel = (sbRow.students as
+            | { email?: string | null }
+            | Array<{ email?: string | null } | null>
+            | null) ?? null
+          const list = Array.isArray(studentRel) ? studentRel : studentRel ? [studentRel] : []
+          for (const s of list) {
+            const email = s?.email ? String(s.email).trim().toLowerCase() : ''
+            if (!email) continue
+            batchStudentEmails.add(email)
+          }
+        }
+
+        // Attendance for past classes must follow the same logic as `AdminLiveClassDetailPage`:
+        // Present count = number of enrolled students where summed `duration_seconds` for the session is > 0.
+        // Host/trainer won't count because we filter to `student_batches` emails.
+        const { data: participantRows, error: participantError } = await supabase
+          .from('class_session_participants')
+          .select(
+            'class_session_id,user_email,duration_seconds',
+          )
+          .in('class_session_id', sessionIdList)
+
+        if (participantError && participantError.code !== '42P01') {
+          setLiveActionError(participantError.message)
+          setAttendanceCountBySessionId({})
+        } else {
+          // sessionId -> (email -> summedDurationSeconds)
+          const durationBySessionEmail = new Map<string, Map<string, number>>()
+          for (const row of participantRows ?? []) {
+            const sessionId = row.class_session_id
+            if (!sessionId) continue
+
+            const email = row.user_email ? String(row.user_email).trim().toLowerCase() : ''
+            if (!email) continue
+            if (!batchStudentEmails.has(email)) continue
+
+            const durationSeconds = Number(row.duration_seconds ?? 0)
+            if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) continue
+
+            const sessionMap = durationBySessionEmail.get(sessionId) ?? new Map<string, number>()
+            sessionMap.set(email, (sessionMap.get(email) ?? 0) + durationSeconds)
+            durationBySessionEmail.set(sessionId, sessionMap)
+          }
+
+          const counts: Record<string, number> = {}
+          for (const [sessionId, emailDurationMap] of durationBySessionEmail.entries()) {
+            // Present = number of enrolled students with durationSeconds > 0 for that session.
+            counts[sessionId] = Array.from(emailDurationMap.values()).filter((sec) => sec > 0).length
+          }
+          setAttendanceCountBySessionId(counts)
+        }
+      } else {
+        setAttendanceCountBySessionId({})
+      }
+
+      const { data: assignmentRows, error: assignmentsError } = await supabase
+        .from('assignments')
+        .select(
+          'id,batch_id,class_session_id,title,description,attachment_url,due_at,max_marks,submission_type,assign_to_all,target_student_ids,created_at,updated_at',
+        )
+        .eq('batch_id', batchId)
+        .order('due_at', { ascending: true })
+
+      if (assignmentsError) {
+        if (assignmentsError.code !== '42P01') {
+          setError(assignmentsError.message)
+          setLoading(false)
+          return
+        }
+        setAssignments([])
+        setAssignmentSubmissionCountBySessionId({})
+        setPendingFeedbackBySessionId({})
+        setPendingFeedbackCount(0)
+        setSubmittedAssignmentCount(0)
+        setAssignmentSubmissions([])
+      } else {
+        const assignmentList = (assignmentRows as BatchAssignmentRow[]) ?? []
+        setAssignments(assignmentList)
+
+        const assignmentToSessionId = new Map<string, string>()
+        const assignmentIds: string[] = []
+        for (const assignment of assignmentList) {
+          if (!assignment.class_session_id) continue
+          assignmentIds.push(assignment.id)
+          assignmentToSessionId.set(assignment.id, assignment.class_session_id)
+        }
+
+        if (!assignmentIds.length) {
+          setAssignmentSubmissionCountBySessionId({})
+          setPendingFeedbackBySessionId({})
+          setPendingFeedbackCount(0)
+          setSubmittedAssignmentCount(0)
+          setAssignmentSubmissions([])
+        } else {
+          const { data: submissionRows, error: submissionError } = await supabase
+            .from('assignment_submissions')
+            .select('assignment_id,submitted_at,marks,feedback')
+            .in('assignment_id', assignmentIds)
+
+          if (submissionError && submissionError.code !== '42P01') {
+            setLiveActionError(submissionError.message)
+            setAssignmentSubmissionCountBySessionId({})
+            setPendingFeedbackBySessionId({})
+            setPendingFeedbackCount(0)
+            setSubmittedAssignmentCount(0)
+            setAssignmentSubmissions([])
+          } else {
+            const countBySessionId: Record<string, number> = {}
+            const pendingBySessionId: Record<string, number> = {}
+            let pendingFeedback = 0
+            let submittedCount = 0
+            for (const row of submissionRows ?? []) {
+              const sessionId = assignmentToSessionId.get(row.assignment_id)
+              if (!sessionId) continue
+              countBySessionId[sessionId] = (countBySessionId[sessionId] ?? 0) + 1
+              if (row.submitted_at) {
+                submittedCount += 1
+                if (!row.feedback || !String(row.feedback).trim()) {
+                  pendingFeedback += 1
+                  pendingBySessionId[sessionId] = (pendingBySessionId[sessionId] ?? 0) + 1
+                }
+              }
+            }
+            setAssignmentSubmissionCountBySessionId(countBySessionId)
+            setPendingFeedbackBySessionId(pendingBySessionId)
+            setPendingFeedbackCount(pendingFeedback)
+            setSubmittedAssignmentCount(submittedCount)
+            setAssignmentSubmissions((submissionRows as AssignmentSubmissionRow[]) ?? [])
+          }
+        }
+      }
 
       const students: StudentInBatch[] = []
       const progressVals: number[] = []
@@ -441,7 +1089,6 @@ export function AdminBatchDetailPage({
           sensitivity: 'base',
         }),
       )
-      setRoster(students)
       setAvgProgress(
         progressVals.length
           ? Math.round(
@@ -450,7 +1097,23 @@ export function AdminBatchDetailPage({
           : null,
       )
 
-      setAnnouncements(annRows ?? [])
+      const announcementList = (annRows as AnnouncementRow[]) ?? []
+      setAnnouncements(announcementList)
+      const announcementIds = announcementList.map((item) => item.id)
+      if (!announcementIds.length) {
+        setAnnouncementReactions([])
+      } else {
+        const { data: reactionRows, error: reactionError } = await supabase
+          .from('announcement_reactions')
+          .select('announcement_id,student_id,reaction_type')
+          .in('announcement_id', announcementIds)
+        if (reactionError && reactionError.code !== '42P01') {
+          setLiveActionError(reactionError.message)
+          setAnnouncementReactions([])
+        } else {
+          setAnnouncementReactions((reactionRows as AnnouncementReactionRow[]) ?? [])
+        }
+      }
       setLoading(false)
     }
 
@@ -467,20 +1130,16 @@ export function AdminBatchDetailPage({
       const raw = window.localStorage.getItem(storageKey)
       if (!raw) {
         setSyllabusSections([])
-        setExpandedSectionIds([])
         return
       }
       const parsed = JSON.parse(raw) as SyllabusSection[]
       if (!Array.isArray(parsed)) {
         setSyllabusSections([])
-        setExpandedSectionIds([])
         return
       }
       setSyllabusSections(parsed)
-      setExpandedSectionIds(parsed.map((section) => section.id))
     } catch {
       setSyllabusSections([])
-      setExpandedSectionIds([])
     }
   }, [batchId])
 
@@ -490,6 +1149,29 @@ export function AdminBatchDetailPage({
   }, [batchId, syllabusSections])
 
   const title = batch?.batch_code ?? initialBatchCode
+
+  const toTitleCase = (value: string | null | undefined) => {
+    if (!value) return 'N/A'
+    return value
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  const getBatchStatusClass = (value: string | null | undefined) => {
+    const normalized = (value ?? '').toLowerCase()
+    if (normalized.includes('in_progress') || normalized.includes('active') || normalized.includes('progress')) {
+      return 'is-in-progress'
+    }
+    if (normalized.includes('planned') || normalized.includes('upcoming')) {
+      return 'is-planned'
+    }
+    if (normalized.includes('completed') || normalized.includes('closed')) {
+      return 'is-completed'
+    }
+    return 'is-default'
+  }
 
   const filteredLiveSessions = useMemo(() => {
     const query = liveSearch.trim().toLowerCase()
@@ -513,11 +1195,10 @@ export function AdminBatchDetailPage({
     const upcoming: ClassSessionRow[] = []
     const past: ClassSessionRow[] = []
     for (const s of filteredLiveSessions) {
-      if (s.zoom_status === 'started' || isSessionLive(s, now)) {
+      const stateLabel = getSessionStateLabel(s, now)
+      if (stateLabel === 'Live' || isSessionLive(s, now)) {
         live.push(s)
-      } else if (s.zoom_status === 'ended') {
-        past.push(s)
-      } else if (new Date(s.starts_at) > now) {
+      } else if (stateLabel === 'Upcoming') {
         upcoming.push(s)
       } else {
         past.push(s)
@@ -541,20 +1222,152 @@ export function AdminBatchDetailPage({
       pastSessions: past,
     }
   }, [filteredLiveSessions])
+  const heroPrimarySession = useMemo(
+    () => liveSessions[0] ?? upcomingSessions[0] ?? null,
+    [liveSessions, upcomingSessions],
+  )
+  const nextPlannedClass = useMemo(
+    () => upcomingSessions[0] ?? null,
+    [upcomingSessions],
+  )
+  const currentScheduleWeek = useMemo(() => {
+    const start = batch?.start_date
+    if (!start) return 1
+    const startDate = new Date(start)
+    if (Number.isNaN(startDate.getTime())) return 1
+    const diffMs = Date.now() - startDate.getTime()
+    if (diffMs <= 0) return 1
+    const week = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
+    return Math.max(1, Math.min(8, week))
+  }, [batch?.start_date])
+  const assignmentsCompletedText = useMemo(() => {
+    if (!assignments.length) return '0 / 0'
+    const completed = Math.min(submittedAssignmentCount, assignments.length)
+    return `${completed} / ${assignments.length}`
+  }, [assignments.length, submittedAssignmentCount])
+  const attendanceProxy = useMemo(() => {
+    const total = liveSessions.length + upcomingSessions.length + pastSessions.length
+    if (!total) return 0
+    return Math.max(0, Math.min(100, Math.round((pastSessions.length / total) * 100)))
+  }, [liveSessions.length, upcomingSessions.length, pastSessions.length])
+  const visibleUpcomingSessions = useMemo(
+    () => (upcomingClassesExpanded ? upcomingSessions : upcomingSessions.slice(0, 6)),
+    [upcomingClassesExpanded, upcomingSessions],
+  )
+  const visiblePastSessions = useMemo(
+    () => (pastClassesExpanded ? pastSessions : pastSessions.slice(0, 6)),
+    [pastClassesExpanded, pastSessions],
+  )
+  const assignmentRows = useMemo(() => {
+    return assignments.map((assignment) => {
+      const rows = assignmentSubmissions.filter((item) => item.assignment_id === assignment.id)
+      const submittedRows = rows.filter((item) => Boolean(item.submitted_at))
+      return {
+        assignment,
+        submittedCount: submittedRows.length,
+      }
+    })
+  }, [assignments, assignmentSubmissions])
+  const assignmentPageSize = 10
+  const assignmentTotalPages = Math.max(1, Math.ceil(assignmentRows.length / assignmentPageSize))
+  const paginatedAssignmentRows = useMemo(
+    () =>
+      assignmentRows.slice(
+        (assignmentPage - 1) * assignmentPageSize,
+        assignmentPage * assignmentPageSize,
+      ),
+    [assignmentRows, assignmentPage],
+  )
+  const announcementReactionSummary = useMemo(() => {
+    const summaryMap = new Map<
+      string,
+      {
+        counts: Record<'thumbs_up' | 'fire' | 'clap' | 'heart', number>
+        reactedStudentCount: number
+      }
+    >()
+    for (const reaction of announcementReactions) {
+      const existing = summaryMap.get(reaction.announcement_id) ?? {
+        counts: { thumbs_up: 0, fire: 0, clap: 0, heart: 0 },
+        reactedStudentCount: 0,
+      }
+      existing.counts[reaction.reaction_type] += 1
+      summaryMap.set(reaction.announcement_id, existing)
+    }
+    for (const [announcementId, data] of summaryMap) {
+      const uniqueStudentIds = new Set(
+        announcementReactions
+          .filter((item) => item.announcement_id === announcementId)
+          .map((item) => item.student_id),
+      )
+      data.reactedStudentCount = uniqueStudentIds.size
+      summaryMap.set(announcementId, data)
+    }
+    return summaryMap
+  }, [announcementReactions])
+  useEffect(() => {
+    setAssignmentPage((prev) => Math.min(prev, assignmentTotalPages))
+  }, [assignmentTotalPages])
 
-  const openUrlInNewTab = (url: string) => {
-    window.open(url, '_blank', 'noopener,noreferrer')
+  const assignmentsBySessionId = useMemo(() => {
+    const map: Record<string, BatchAssignmentRow[]> = {}
+    for (const assignment of assignments) {
+      if (!assignment.class_session_id) continue
+      if (!map[assignment.class_session_id]) {
+        map[assignment.class_session_id] = []
+      }
+      map[assignment.class_session_id].push(assignment)
+    }
+    return map
+  }, [assignments])
+
+  const assignmentCountBySessionId = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const assignment of assignments) {
+      if (!assignment.class_session_id) continue
+      map[assignment.class_session_id] = (map[assignment.class_session_id] ?? 0) + 1
+    }
+    return map
+  }, [assignments])
+  const recentlyCompletedWithoutAssignment = useMemo(
+    () =>
+      pastSessions.find(
+        (session) =>
+          session.zoom_status === 'ended' &&
+          (assignmentCountBySessionId[session.id] ?? 0) === 0,
+      ) ?? null,
+    [pastSessions, assignmentCountBySessionId],
+  )
+
+  const preparePopupWindow = () =>
+    window.open('', '_blank', 'noopener,noreferrer')
+
+  const openUrlInNewTab = (url: string, preparedWindow?: Window | null) => {
+    if (preparedWindow && !preparedWindow.closed) {
+      preparedWindow.location.href = url
+      return
+    }
+
+    const opened = window.open(url, '_blank', 'noopener,noreferrer')
+    if (!opened) {
+      // Fallback when popup is blocked by browser policies.
+      window.location.href = url
+    }
   }
 
   const handleStartSession = async (meetingId: string) => {
+    const popupWindow = preparePopupWindow()
     try {
       setLiveActionError('')
       setActionBusyMeetingId(meetingId)
       const data = await getStartUrl(meetingId)
       if (data.start_url) {
-        openUrlInNewTab(data.start_url)
+        openUrlInNewTab(data.start_url, popupWindow)
+      } else {
+        popupWindow?.close()
       }
     } catch (error) {
+      popupWindow?.close()
       setLiveActionError(
         error instanceof Error ? error.message : 'Unable to start class.',
       )
@@ -563,31 +1376,64 @@ export function AdminBatchDetailPage({
     }
   }
 
-  const handleJoinSession = async (meetingId: string) => {
+  const handleOpenRecording = async (session: ClassSessionRow) => {
+    if (session.recording_url) {
+      setLiveActionError('')
+      setRecordingPreview({ title: session.title, url: session.recording_url })
+      setSelectedReportRows([])
+      return
+    }
+
+    if (!session.zoom_meeting_id) {
+      setLiveActionError('Recording is not available yet for this class.')
+      return
+    }
+
     try {
       setLiveActionError('')
-      setActionBusyMeetingId(meetingId)
-      const data = await getJoinUrl(meetingId)
-      if (data.join_url) {
-        openUrlInNewTab(data.join_url)
+      setActionBusyMeetingId(session.zoom_meeting_id)
+      const data = await getMeetingRecordings(session.zoom_meeting_id)
+      const latestRecording = data.recordings[0]?.play_url ?? null
+      if (!latestRecording) {
+        setLiveActionError(
+          data.status === 'processing'
+            ? 'Recording is still processing in Zoom. Please check again in a few minutes.'
+            : 'Recording is not available yet for this class.',
+        )
+        return
       }
+
+      setSessions((prev) =>
+        prev.map((item) =>
+          item.id === session.id
+            ? {
+                ...item,
+                recording_url: latestRecording,
+                recording_status: 'available',
+              }
+            : item,
+        ),
+      )
+
+      // Best effort cache so students/admin can open directly next time.
+      await supabase
+        .from('class_sessions')
+        .update({
+          recording_url: latestRecording,
+          recording_status: 'available',
+          has_recording: true,
+        })
+        .eq('id', session.id)
+
+      setRecordingPreview({ title: session.title, url: latestRecording })
+      setSelectedReportRows([])
     } catch (error) {
       setLiveActionError(
-        error instanceof Error ? error.message : 'Unable to join class.',
+        error instanceof Error ? error.message : 'Unable to fetch recording.',
       )
     } finally {
       setActionBusyMeetingId(null)
     }
-  }
-
-  const handleOpenRecording = (session: ClassSessionRow) => {
-    if (!session.recording_url) {
-      setLiveActionError('Recording is not available yet for this class.')
-      return
-    }
-    setLiveActionError('')
-    setRecordingPreview({ title: session.title, url: session.recording_url })
-    setSelectedReportRows([])
   }
 
   const handleViewReport = async (meetingId: string) => {
@@ -605,95 +1451,6 @@ export function AdminBatchDetailPage({
     }
   }
 
-  const totalSyllabusLessons = useMemo(
-    () =>
-      syllabusSections.reduce((count, section) => count + section.items.length, 0),
-    [syllabusSections],
-  )
-
-  const toggleSectionExpanded = (sectionId: string) => {
-    setExpandedSectionIds((prev) =>
-      prev.includes(sectionId)
-        ? prev.filter((id) => id !== sectionId)
-        : [...prev, sectionId],
-    )
-  }
-
-  const handleCreateSection = (event: FormEvent) => {
-    event.preventDefault()
-    const title = sectionTitle.trim()
-    if (!title) return
-    const id = crypto.randomUUID()
-    setSyllabusSections((prev) => [...prev, { id, title, items: [] }])
-    setExpandedSectionIds((prev) => [...prev, id])
-    setSectionTitle('')
-    setSectionFormOpen(false)
-  }
-
-  const handleOpenItemForm = (sectionId: string) => {
-    setActiveItemSectionId(sectionId)
-    setItemForm({
-      type: 'live_class',
-      title: '',
-      url: '',
-      classSessionId: '',
-    })
-  }
-
-  const handleCreateSyllabusItem = (event: FormEvent) => {
-    event.preventDefault()
-    if (!activeItemSectionId) return
-
-    let title = itemForm.title.trim()
-    let url = itemForm.url.trim() || null
-    let classSessionId: string | null = null
-
-    if (itemForm.type === 'live_class') {
-      const classSession = sessions.find((s) => s.id === itemForm.classSessionId)
-      if (!classSession) {
-        setLiveActionError('Please choose a live class to add.')
-        return
-      }
-      classSessionId = classSession.id
-      if (!title) title = classSession.title
-      url = classSession.join_url || null
-    } else {
-      if (!title) {
-        setLiveActionError('Please add a content title.')
-        return
-      }
-    }
-
-    setSyllabusSections((prev) =>
-      prev.map((section) =>
-        section.id !== activeItemSectionId
-          ? section
-          : {
-              ...section,
-              items: [
-                ...section.items,
-                {
-                  id: crypto.randomUUID(),
-                  type: itemForm.type,
-                  title,
-                  url,
-                  class_session_id: classSessionId,
-                },
-              ],
-            },
-      ),
-    )
-
-    setLiveActionError('')
-    setActiveItemSectionId(null)
-    setItemForm({
-      type: 'live_class',
-      title: '',
-      url: '',
-      classSessionId: '',
-    })
-  }
-
   const handleCreateAnnouncement = async (event: FormEvent) => {
     event.preventDefault()
     if (!batch) return
@@ -708,6 +1465,17 @@ export function AdminBatchDetailPage({
     try {
       setAnnouncementSaving(true)
       setLiveActionError('')
+      let attachmentUrl: string | null = null
+      if (announcementAttachmentFile) {
+        const safeName = announcementAttachmentFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const objectPath = `batch-${batch.id}/announcements/${Date.now()}-${safeName}`
+        const { error: uploadError } = await supabase.storage
+          .from('batch-community-chat')
+          .upload(objectPath, announcementAttachmentFile, { upsert: false })
+        if (uploadError) throw uploadError
+        const { data: publicData } = supabase.storage.from('batch-community-chat').getPublicUrl(objectPath)
+        attachmentUrl = publicData.publicUrl ?? null
+      }
       const { data, error } = await supabase
         .from('announcements')
         .insert({
@@ -715,9 +1483,10 @@ export function AdminBatchDetailPage({
           title,
           body,
           is_important: announcementForm.isImportant,
+          attachment_url: attachmentUrl,
           published_at: new Date().toISOString(),
         })
-        .select('id,title,body,is_important,published_at')
+        .select('id,title,body,is_important,published_at,attachment_url')
         .single()
 
       if (error) throw error
@@ -730,6 +1499,9 @@ export function AdminBatchDetailPage({
         body: '',
         isImportant: false,
       })
+      setAnnouncementAttachmentFile(null)
+      setAnnouncementToast('Announcement sent successfully.')
+      setTimeout(() => setAnnouncementToast(''), 2200)
     } catch (error) {
       setLiveActionError(
         error instanceof Error
@@ -741,11 +1513,253 @@ export function AdminBatchDetailPage({
     }
   }
 
+  const handleStartEditAnnouncement = (announcement: AnnouncementRow) => {
+    setLiveActionError('')
+    setEditingAnnouncementId(announcement.id)
+    setEditingAnnouncementForm({
+      title: announcement.title,
+      body: announcement.body,
+    })
+  }
+
+  const handleCancelEditAnnouncement = () => {
+    setEditingAnnouncementId(null)
+    setEditingAnnouncementForm({
+      title: '',
+      body: '',
+    })
+  }
+
+  const handleSaveAnnouncementEdit = async (announcementId: string) => {
+    const title = editingAnnouncementForm.title.trim()
+    const body = editingAnnouncementForm.body.trim()
+    if (!title || !body) {
+      setLiveActionError('Announcement title and message are required.')
+      return
+    }
+
+    try {
+      setAnnouncementActionId(announcementId)
+      setLiveActionError('')
+      const { data, error } = await supabase
+        .from('announcements')
+        .update({ title, body })
+        .eq('id', announcementId)
+        .select('id,title,body,is_important,published_at,attachment_url')
+        .single()
+
+      if (error) throw error
+
+      if (data) {
+        setAnnouncements((prev) =>
+          prev.map((item) => (item.id === announcementId ? (data as AnnouncementRow) : item)),
+        )
+      }
+      handleCancelEditAnnouncement()
+    } catch (error) {
+      setLiveActionError(
+        error instanceof Error ? error.message : 'Unable to update announcement.',
+      )
+    } finally {
+      setAnnouncementActionId(null)
+    }
+  }
+
+  const handleDeleteAnnouncement = async (announcementId: string) => {
+    if (!window.confirm('Delete this announcement? This action cannot be undone.')) return
+
+    try {
+      setAnnouncementActionId(announcementId)
+      setLiveActionError('')
+      const { error } = await supabase.from('announcements').delete().eq('id', announcementId)
+      if (error) throw error
+
+      setAnnouncements((prev) => prev.filter((item) => item.id !== announcementId))
+      setAnnouncementReactions((prev) =>
+        prev.filter((reaction) => reaction.announcement_id !== announcementId),
+      )
+      if (editingAnnouncementId === announcementId) {
+        handleCancelEditAnnouncement()
+      }
+    } catch (error) {
+      setLiveActionError(
+        error instanceof Error ? error.message : 'Unable to delete announcement.',
+      )
+    } finally {
+      setAnnouncementActionId(null)
+    }
+  }
+
+  const openScheduleForNew = (openModal = true) => {
+    setLiveActionError('')
+    setClassAttachmentFile(null)
+    setAssignmentAttachmentDragOver(false)
+    setAssignmentAttachmentFile(null)
+    setScheduleForm((prev) => ({
+      ...prev,
+      classSessionId: '',
+      topicSelection: '',
+      customTopic: '',
+      date: '',
+      time: '',
+      duration: 60,
+      attachmentUrl: '',
+      addAssignment: false,
+      assignmentId: '',
+      assignmentTitle: '',
+      assignmentDescription: '',
+      assignmentAttachmentUrl: '',
+      assignmentDueDate: '',
+      assignmentDueTime: '',
+      assignmentMaxMarks: '',
+      assignmentSubmissionType: 'both',
+      assignmentAssignToAll: true,
+      assignmentStudentIds: [],
+    }))
+    setScheduleOpen(openModal)
+  }
+
+  const handleEditSession = (session: ClassSessionRow, forceAddAssignment = false) => {
+    const classDate = toLocalDateInputValue(session.starts_at)
+    const classTime = toLocalTimeInputValue(session.starts_at)
+    const calculatedDuration =
+      session.ends_at && new Date(session.ends_at).getTime() > new Date(session.starts_at).getTime()
+        ? Math.max(
+            15,
+            Math.round(
+              (new Date(session.ends_at).getTime() -
+                new Date(session.starts_at).getTime()) /
+                60000,
+            ),
+          )
+        : 60
+    const linkedAssignment = assignmentsBySessionId[session.id]?.[0] ?? null
+    const isPresetTopic = (trainerTopicOptions as readonly string[]).includes(
+      session.title,
+    )
+    setLiveActionError('')
+    setClassAttachmentFile(null)
+    setAssignmentAttachmentDragOver(false)
+    setAssignmentAttachmentFile(null)
+    setScheduleForm((prev) => ({
+      ...prev,
+      classSessionId: session.id,
+      topicSelection: isPresetTopic ? session.title : TOPIC_OPTION_OTHERS,
+      customTopic: isPresetTopic ? '' : session.title,
+      date: classDate,
+      time: classTime,
+      duration: calculatedDuration,
+      attachmentUrl: '',
+      addAssignment: forceAddAssignment || Boolean(linkedAssignment),
+      assignmentId: linkedAssignment?.id ?? '',
+      assignmentTitle: linkedAssignment?.title ?? '',
+      assignmentDescription: linkedAssignment?.description ?? '',
+      assignmentAttachmentUrl: linkedAssignment?.attachment_url ?? '',
+      assignmentDueDate: linkedAssignment?.due_at
+        ? toLocalDateInputValue(linkedAssignment.due_at)
+        : '',
+      assignmentDueTime: linkedAssignment?.due_at
+        ? toLocalTimeInputValue(linkedAssignment.due_at)
+        : '',
+      assignmentMaxMarks:
+        linkedAssignment?.max_marks === null || linkedAssignment?.max_marks === undefined
+          ? ''
+          : String(linkedAssignment.max_marks),
+      assignmentSubmissionType: linkedAssignment?.submission_type ?? 'both',
+      assignmentAssignToAll: linkedAssignment?.assign_to_all ?? true,
+      assignmentStudentIds: linkedAssignment?.target_student_ids ?? [],
+    }))
+    setScheduleOpen(true)
+  }
+
+  const handleEditAssignment = (assignment: BatchAssignmentRow) => {
+    const linkedSession = sessions.find((session) => session.id === assignment.class_session_id)
+    if (!linkedSession) {
+      setLiveActionError('Linked class session not found for this assignment.')
+      return
+    }
+    handleEditSession(linkedSession)
+  }
+
+  const handleDeleteAssignment = async (assignmentId: string) => {
+    if (!window.confirm('Delete this assignment? This action cannot be undone.')) return
+    const { error: deleteError } = await supabase.from('assignments').delete().eq('id', assignmentId)
+    if (deleteError) {
+      setLiveActionError(deleteError.message)
+      return
+    }
+    setAssignments((prev) => prev.filter((assignment) => assignment.id !== assignmentId))
+    setAssignmentSubmissions((prev) =>
+      prev.filter((submission) => submission.assignment_id !== assignmentId),
+    )
+  }
+
+  const handleAddAssignmentToSession = (session: ClassSessionRow) => {
+    handleEditSession(session, true)
+  }
+
+  const handleViewAssignmentReportsForSession = (session: ClassSessionRow) => {
+    const linkedAssignment = assignmentsBySessionId[session.id]?.[0]
+    if (linkedAssignment && onOpenAssignment) {
+      onOpenAssignment(linkedAssignment.id, batchId)
+      return
+    }
+    setActiveTab('assignments')
+    onTabChange?.('assignments')
+  }
+
+  const handleCopyJoinUrl = async (session: ClassSessionRow) => {
+    if (!session.join_url) {
+      setLiveActionError('Join URL is not available yet for this class.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(session.join_url)
+      setLiveActionError('Join URL copied to clipboard.')
+    } catch {
+      setLiveActionError('Unable to copy Join URL. Please copy it manually.')
+    }
+  }
+
+  const handleDeleteSession = async (session: ClassSessionRow) => {
+    if (!window.confirm(`Delete class "${session.title}"? This action cannot be undone.`)) {
+      return
+    }
+    const { error: deleteError } = await supabase
+      .from('class_sessions')
+      .delete()
+      .eq('id', session.id)
+    if (deleteError) {
+      setLiveActionError(deleteError.message)
+      return
+    }
+    setSessions((prev) => prev.filter((s) => s.id !== session.id))
+    setAssignments((prev) =>
+      prev.map((assignment) =>
+        assignment.class_session_id === session.id
+          ? { ...assignment, class_session_id: null }
+          : assignment,
+      ),
+    )
+    setAssignmentSubmissionCountBySessionId((prev) => {
+      const next = { ...prev }
+      delete next[session.id]
+      return next
+    })
+  }
+
   const handleScheduleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!batch) return
+    const isCustomTopic =
+      scheduleForm.topicSelection === TOPIC_OPTION_ADD_NEW ||
+      scheduleForm.topicSelection === TOPIC_OPTION_OTHERS
+    const resolvedTopic = (
+      isCustomTopic ? scheduleForm.customTopic : scheduleForm.topicSelection
+    ).trim()
+
     if (
-      !scheduleForm.topic ||
+      !resolvedTopic ||
       !scheduleForm.date ||
       !scheduleForm.time ||
       !scheduleForm.hostUserId
@@ -756,29 +1770,70 @@ export function AdminBatchDetailPage({
       return
     }
 
+    const startIso = new Date(
+      `${scheduleForm.date}T${scheduleForm.time}:00`,
+    ).toISOString()
+    const endIso = new Date(
+      new Date(startIso).getTime() + scheduleForm.duration * 60 * 1000,
+    ).toISOString()
+    const hasAssignment = scheduleForm.addAssignment
+
+    if (hasAssignment) {
+      const assignmentTitle = scheduleForm.assignmentTitle.trim()
+      const dueDateTimeRaw =
+        scheduleForm.assignmentDueDate && scheduleForm.assignmentDueTime
+          ? `${scheduleForm.assignmentDueDate}T${scheduleForm.assignmentDueTime}:00`
+          : ''
+      const dueIso = dueDateTimeRaw ? new Date(dueDateTimeRaw).toISOString() : ''
+
+      if (!assignmentTitle || !dueIso) {
+        setLiveActionError(
+          'Assignment title and assignment due date/time are required.',
+        )
+        return
+      }
+      if (new Date(dueIso).getTime() < new Date(endIso).getTime()) {
+        setLiveActionError('Assignment due date/time cannot be before class end time.')
+        return
+      }
+    }
+
     try {
       setScheduleBusy(true)
       setLiveActionError('')
-      const startIso = new Date(
-        `${scheduleForm.date}T${scheduleForm.time}:00`,
-      ).toISOString()
+      let classAttachmentUrl = scheduleForm.attachmentUrl.trim() || ''
+      if (classAttachmentFile) {
+        const safeName = classAttachmentFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const classFilePath = `batch-${batch.id}/class-attachments/${Date.now()}-${safeName}`
+        const { error: classUploadError } = await supabase.storage
+          .from('assignments')
+          .upload(classFilePath, classAttachmentFile, { upsert: false })
+        if (classUploadError) {
+          throw classUploadError
+        }
+        const { data: classPublicData } = supabase.storage
+          .from('assignments')
+          .getPublicUrl(classFilePath)
+        classAttachmentUrl = classPublicData.publicUrl ?? classAttachmentUrl
+      }
       const response = await scheduleClass({
+        classSessionId: scheduleForm.classSessionId || undefined,
         batchId: batch.id,
         trainerId: batch.trainer_id ?? undefined,
         hostUserId: scheduleForm.hostUserId,
-        topic: scheduleForm.topic,
-        attachmentUrl: scheduleForm.attachmentUrl,
+        topic: resolvedTopic,
+        attachmentUrl: classAttachmentUrl || undefined,
         startTime: startIso,
         duration: scheduleForm.duration,
       })
 
-      const newSession: ClassSessionRow = {
+      const sessionId = response.classSession.id
+      const upsertedSession: ClassSessionRow = {
         id: response.classSession.id,
-        title: scheduleForm.topic,
+        title: resolvedTopic,
+        description: classAttachmentUrl || null,
         starts_at: startIso,
-        ends_at: new Date(
-          new Date(startIso).getTime() + scheduleForm.duration * 60 * 1000,
-        ).toISOString(),
+        ends_at: endIso,
         join_url: response.meeting.join_url ?? null,
         recording_url: null,
         zoom_meeting_id: String(response.meeting.id),
@@ -787,17 +1842,104 @@ export function AdminBatchDetailPage({
         recording_status: 'pending',
       }
 
-      setSessions((prev) =>
-        [...prev, newSession].sort(
+      if (hasAssignment) {
+        const assignmentTitle = scheduleForm.assignmentTitle.trim()
+        const dueIso = new Date(
+          `${scheduleForm.assignmentDueDate}T${scheduleForm.assignmentDueTime}:00`,
+        ).toISOString()
+        const maxMarksRaw = scheduleForm.assignmentMaxMarks.trim()
+        const parsedMaxMarks = maxMarksRaw ? Number(maxMarksRaw) : null
+        let uploadedAttachmentUrl = scheduleForm.assignmentAttachmentUrl.trim() || null
+        if (assignmentAttachmentFile) {
+          const safeName = assignmentAttachmentFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+          const filePath = `batch-${batch.id}/${sessionId}/${Date.now()}-${safeName}`
+          const { error: uploadError } = await supabase.storage
+            .from('assignments')
+            .upload(filePath, assignmentAttachmentFile, { upsert: false })
+          if (uploadError) {
+            throw uploadError
+          }
+          const { data: publicData } = supabase.storage
+            .from('assignments')
+            .getPublicUrl(filePath)
+          uploadedAttachmentUrl = publicData.publicUrl ?? uploadedAttachmentUrl
+        }
+        const payload = {
+          batch_id: batch.id,
+          class_session_id: sessionId,
+          title: assignmentTitle,
+          description: scheduleForm.assignmentDescription.trim() || null,
+          attachment_url: uploadedAttachmentUrl,
+          due_at: dueIso,
+          max_marks:
+            parsedMaxMarks !== null && Number.isFinite(parsedMaxMarks)
+              ? parsedMaxMarks
+              : null,
+          submission_type: scheduleForm.assignmentSubmissionType,
+          assign_to_all: scheduleForm.assignmentAssignToAll,
+          target_student_ids: scheduleForm.assignmentAssignToAll
+            ? null
+            : scheduleForm.assignmentStudentIds,
+        }
+        const assignmentQuery = scheduleForm.assignmentId
+          ? supabase
+              .from('assignments')
+              .update(payload)
+              .eq('id', scheduleForm.assignmentId)
+          : supabase.from('assignments').insert(payload)
+        const { error: assignmentError } = await assignmentQuery
+        if (assignmentError) {
+          throw assignmentError
+        }
+      } else if (scheduleForm.assignmentId) {
+        const { error: deleteError } = await supabase
+          .from('assignments')
+          .delete()
+          .eq('id', scheduleForm.assignmentId)
+        if (deleteError) {
+          throw deleteError
+        }
+      }
+
+      const { data: assignmentRows, error: assignmentsReloadError } = await supabase
+        .from('assignments')
+        .select(
+          'id,batch_id,class_session_id,title,description,attachment_url,due_at,max_marks,submission_type,assign_to_all,target_student_ids,created_at,updated_at',
+        )
+        .eq('batch_id', batch.id)
+        .order('due_at', { ascending: true })
+      if (assignmentsReloadError && assignmentsReloadError.code !== '42P01') {
+        throw assignmentsReloadError
+      }
+      setAssignments((assignmentRows as BatchAssignmentRow[]) ?? [])
+
+      setSessions((prev) => {
+        const exists = prev.some((session) => session.id === upsertedSession.id)
+        const next = exists
+          ? prev.map((session) =>
+              session.id === upsertedSession.id ? upsertedSession : session,
+            )
+          : [...prev, upsertedSession]
+        return next.sort(
           (a, b) =>
             new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime(),
-        ),
-      )
+        )
+      })
       setScheduleOpen(false)
-      setScheduleForm((prev) => ({ ...prev, topic: '', attachmentUrl: '' }))
+      setClassAttachmentFile(null)
+      setAssignmentAttachmentFile(null)
+      openScheduleForNew(false)
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to schedule class.'
+      if (message.includes("public.assignments")) {
+        setLiveActionError(
+          'Assignments table is missing in Supabase. Run assignments_schema.sql once, then try again.',
+        )
+        return
+      }
       setLiveActionError(
-        error instanceof Error ? error.message : 'Unable to schedule class.',
+        message,
       )
     } finally {
       setScheduleBusy(false)
@@ -830,6 +1972,26 @@ export function AdminBatchDetailPage({
     void loadHosts()
   }, [scheduleOpen, zoomHosts.length, hostsLoading, scheduleForm.hostUserId])
 
+  useEffect(() => {
+    const handleOutside = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (scheduleTopicBoxRef.current && !scheduleTopicBoxRef.current.contains(target)) {
+        setScheduleTopicOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleOutside)
+    return () => window.removeEventListener('mousedown', handleOutside)
+  }, [])
+  useEffect(() => {
+    if (!openAssignmentMenuId) return
+    const handleOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.student-assignment-actions .class-card-menu-wrap')) return
+      setOpenAssignmentMenuId(null)
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [openAssignmentMenuId])
   if (loading) {
     return (
       <section className="panel">
@@ -850,41 +2012,63 @@ export function AdminBatchDetailPage({
   }
 
   return (
-    <div className="batch-detail-page">
-      <button type="button" className="batch-detail-back" onClick={onBack}>
-        ← Back to batches
-      </button>
+    <div className="batch-detail-page admin-batch-detail-revamp">
+      <aside className="admin-batch-detail-left">
+        <button
+          type="button"
+          className="batch-detail-back admin-batch-detail-back"
+          onClick={onBack}
+        >
+          ← Back to Dashboard
+        </button>
 
-      <header className="batch-detail-header">
-        <div className="batch-detail-header-text">
-          <h1 className="batch-detail-title">{title}</h1>
-          {batch ? (
-            <div className="batch-detail-meta-row">
-              <span className={batchStatusPillClass(batch.status)}>
-                {formatLabel(batch.status)}
-              </span>
-              {batch.trainers?.trainer_name ? (
-                <span className="batch-detail-trainer-pill">
-                  Trainer: {batch.trainers.trainer_name}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <p className="muted-dark batch-detail-subtitle">
-              Manage classes, roster, and announcements for this batch.
-            </p>
-          )}
-        </div>
-        <div className="batch-detail-image-placeholder" aria-hidden>
+        <div className="admin-batch-detail-context">
           <img
-            src="/course-cover.png"
-            alt=""
-            className="batch-detail-cover"
+            src="http://switch2itjobs.com/wp-content/uploads/2026/04/BA-Cover-1.jpg"
+            alt="Course"
+            className="admin-batch-detail-course-image"
           />
+          <span className={`student-batch-status-pill ${getBatchStatusClass(batch?.status)}`}>
+            {toTitleCase(batch?.status ?? 'in_progress')}
+          </span>
+          <h2 className="admin-batch-detail-program-title">SIT&apos;S BUSINESS ANALYST PROGRAM</h2>
+          <div className="admin-batch-detail-divider" aria-hidden="true" />
+          <p className="student-batch-hero-sub admin-batch-detail-sub">
+            <span>
+              <Briefcase size={13} /> {title}
+            </span>
+            <span>•</span>
+            <span>
+              <CalendarDays size={13} /> {formatDateOnly(batch?.start_date ?? null)} -{' '}
+              {formatDateOnly(batch?.end_date ?? null)}
+            </span>
+          </p>
         </div>
-      </header>
 
-      <nav className="batch-detail-tabs" role="tablist" aria-label="Batch sections">
+        <div className="student-batch-next-card admin-batch-detail-next-card">
+          <p>Next Class</p>
+          <h4>{heroPrimarySession?.title ?? 'No class scheduled'}</h4>
+          <span className="student-batch-next-time">
+            {heroPrimarySession ? formatDateTime(heroPrimarySession.starts_at) : 'Today, 06:30 PM'}
+          </span>
+          <button
+            type="button"
+            className="student-batch-hero-primary"
+            disabled={!heroPrimarySession?.zoom_meeting_id || actionBusyMeetingId === heroPrimarySession.zoom_meeting_id}
+            onClick={() => {
+              if (heroPrimarySession?.zoom_meeting_id) {
+                void handleStartSession(heroPrimarySession.zoom_meeting_id)
+              }
+            }}
+          >
+            <Play size={13} />{' '}
+            {actionBusyMeetingId === heroPrimarySession?.zoom_meeting_id ? 'Starting...' : 'Join Class'}
+          </button>
+        </div>
+      </aside>
+
+      <section className="admin-batch-detail-main">
+      <nav className="batch-detail-tabs admin-batch-detail-tabs" role="tablist" aria-label="Batch sections">
         {TAB_ITEMS.map((tab) => (
           <button
             key={tab.id}
@@ -899,13 +2083,19 @@ export function AdminBatchDetailPage({
           >
             {tab.icon}
             {tab.label}
+            {tab.id === 'community' && unreadCommunityCount > 0 ? (
+              <span className="student-tab-badge">{unreadCommunityCount}</span>
+            ) : null}
           </button>
         ))}
       </nav>
 
       <div
         className={`batch-detail-panel ${
-          activeTab === 'live-classes'
+          activeTab === 'live-classes' ||
+          activeTab === 'overview' ||
+          activeTab === 'announcements' ||
+          activeTab === 'community'
             ? 'batch-detail-panel-plain'
             : activeTab === 'students'
               ? 'batch-detail-panel-students'
@@ -914,148 +2104,208 @@ export function AdminBatchDetailPage({
         role="tabpanel"
       >
         {activeTab === 'overview' && batch ? (
-          <div className="batch-overview-grid">
-            <article className="batch-stat-card">
-              <p className="batch-stat-label">Status</p>
-              <p className="batch-stat-value">{formatLabel(batch.status)}</p>
+          <section className="admin-overview-v2">
+            <article className="admin-overview-v2-panel">
+              <h3>Today&apos;s Plan</h3>
+              <div className="admin-overview-v2-plan-list">
+                <article className="admin-overview-v2-plan-card is-feedback">
+                  <div>
+                    <p className="admin-overview-v2-plan-label">Feedback Pending</p>
+                    <h4>
+                      {pendingFeedbackCount > 0
+                        ? `${pendingFeedbackCount} Submission${pendingFeedbackCount > 1 ? 's' : ''}`
+                        : 'No Pending Feedback'}
+                    </h4>
+                    <span>
+                      {pendingFeedbackCount > 0
+                        ? 'Submitted assignments are waiting for trainer feedback.'
+                        : 'All submitted assignments are reviewed.'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="admin-overview-v2-plan-btn is-feedback"
+                    onClick={() => {
+                      setActiveTab('assignments')
+                      onTabChange?.('assignments')
+                    }}
+                  >
+                    Review
+                  </button>
+                </article>
+
+                <article className="admin-overview-v2-plan-card is-prepare">
+                  <div>
+                    <p className="admin-overview-v2-plan-label">Preparation</p>
+                    <h4>
+                      {nextPlannedClass
+                        ? `Prepare: ${nextPlannedClass.title}`
+                        : 'No upcoming class scheduled'}
+                    </h4>
+                    <span>
+                      {nextPlannedClass
+                        ? formatSessionTimeRange(nextPlannedClass.starts_at, nextPlannedClass.ends_at)
+                        : 'Create a class schedule for this batch.'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="admin-overview-v2-plan-btn is-prepare"
+                    onClick={() => {
+                      setActiveTab('live-classes')
+                      onTabChange?.('live-classes')
+                    }}
+                  >
+                    View
+                  </button>
+                </article>
+
+                {recentlyCompletedWithoutAssignment ? (
+                  <article className="admin-overview-v2-plan-card is-assignment">
+                    <div>
+                      <p className="admin-overview-v2-plan-label">Assignment Action</p>
+                      <h4>Add assignment for completed class</h4>
+                      <span>{recentlyCompletedWithoutAssignment.title}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="admin-overview-v2-plan-btn is-assignment"
+                      onClick={() =>
+                        handleAddAssignmentToSession(recentlyCompletedWithoutAssignment)
+                      }
+                    >
+                      Add Assignment
+                    </button>
+                  </article>
+                ) : null}
+              </div>
             </article>
-            <article className="batch-stat-card">
-              <p className="batch-stat-label">Batch type</p>
-              <p className="batch-stat-value">{formatLabel(batch.batch_type)}</p>
+
+            <article className="admin-overview-v2-panel">
+              <h3>Batch Overview</h3>
+              <div className="admin-overview-v2-kpi-grid">
+                <article className="admin-overview-v2-kpi is-progress">
+                  <p>Overall Progress</p>
+                  <h4>{avgProgress === null ? '—' : `${avgProgress}%`}</h4>
+                  <span>You&apos;re on track for completion</span>
+                </article>
+                <article className="admin-overview-v2-kpi is-assignments">
+                  <p>Assignments Completed</p>
+                  <h4>{assignmentsCompletedText}</h4>
+                  <span>Submission consistency</span>
+                </article>
+                <article className="admin-overview-v2-kpi is-attendance">
+                  <p>Attendance</p>
+                  <h4>{attendanceProxy}%</h4>
+                  <span>Based on classes completed</span>
+                </article>
+              </div>
             </article>
-            <article className="batch-stat-card">
-              <p className="batch-stat-label">Students</p>
-              <p className="batch-stat-value">{roster.length}</p>
-            </article>
-            <article className="batch-stat-card">
-              <p className="batch-stat-label">Avg. progress</p>
-              <p className="batch-stat-value">
-                {avgProgress === null ? '—' : `${avgProgress}%`}
-              </p>
-            </article>
-            <article className="batch-stat-card batch-stat-wide">
-              <p className="batch-stat-label">Schedule</p>
-              <p className="batch-stat-value subtle">
-                {formatDateOnly(batch.start_date)} → {formatDateOnly(batch.end_date)}
-              </p>
-            </article>
-            <article className="batch-stat-card batch-stat-wide">
-              <p className="batch-stat-label">Capacity</p>
-              <p className="batch-stat-value subtle">
-                {roster.length}
-                {batch.batch_capacity > 0
-                  ? ` / ${batch.batch_capacity} seats`
-                  : ' enrolled'}
-              </p>
-            </article>
-            {batch.notes ? (
-              <article className="batch-notes-card batch-stat-full">
-                <p className="batch-stat-label">Notes</p>
-                <p className="batch-notes-body">{batch.notes}</p>
-              </article>
-            ) : null}
-          </div>
+          </section>
         ) : null}
 
         {activeTab === 'live-classes' ? (
-          <div className="live-classes-cards">
+          <div className="student-classes-table-wrap">
             <div className="live-classes-toolbar">
-              <div className="live-classes-filters">
-                <label className="live-filter-search">
-                  <Search size={14} />
-                  <input
-                    type="text"
-                    placeholder="Search classes"
-                    value={liveSearch}
-                    onChange={(event) => setLiveSearch(event.target.value)}
-                  />
-                </label>
-                <label className="live-filter-select">
-                  <span>Filter</span>
-                  <select
-                    value={liveFilter}
-                    onChange={(event) =>
-                      setLiveFilter(
-                        event.target.value as
-                          | 'all'
-                          | 'join_link'
-                          | 'recording'
-                          | 'no_links',
-                      )
-                    }
-                  >
-                    <option value="all">All classes</option>
-                    <option value="join_link">Has join link</option>
-                    <option value="recording">Has recording</option>
-                    <option value="no_links">No links</option>
-                  </select>
-                </label>
-              </div>
+              <div />
               <button
                 type="button"
                 className="schedule-class-btn"
-                onClick={() => setScheduleOpen(true)}
+                onClick={() => openScheduleForNew(true)}
               >
                 Schedule Class
               </button>
             </div>
-
-            {liveSessions.length > 0 ? (
-              <article className="live-class-card live-class-card-live">
-                <header className="live-class-card-head">
-                  <span className="live-class-card-title">Live</span>
-                  <span className="live-now-badge" aria-label="Happening now">
-                    <span className="live-now-dot" aria-hidden />
-                    Now
-                  </span>
-                </header>
-                <div className="live-class-card-body">
-                  <SessionRows
-                    items={liveSessions}
-                    variant="live"
-                    onStart={handleStartSession}
-                    onJoin={handleJoinSession}
-                    onOpenRecording={handleOpenRecording}
-                    onReport={handleViewReport}
-                    loadingMeetingId={actionBusyMeetingId}
-                  />
-                </div>
-              </article>
-            ) : null}
-
-            <article className="live-class-card">
-              <header className="live-class-card-head live-class-card-head-blue">
-                <span className="live-class-card-title">Upcoming</span>
-              </header>
-              <div className="live-class-card-body">
+            <div className="student-classes-section-head">
+              <h4><Clock3 size={16} /> Upcoming Classes</h4>
+              <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
+                {upcomingClassesExpanded ? 'Show Less' : 'View All'}
+              </button>
+            </div>
+            <article className="student-classes-table-card is-upcoming-table">
+              <table className="student-classes-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Topic</th>
+                    <th>Attachments</th>
+                    <th>Time</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
                 <SessionRows
-                  items={upcomingSessions}
+                  items={visibleUpcomingSessions}
                   variant="upcoming"
                   onStart={handleStartSession}
-                  onJoin={handleJoinSession}
                   onOpenRecording={handleOpenRecording}
                   onReport={handleViewReport}
+                  assignmentCountBySessionId={assignmentCountBySessionId}
+                  attendanceCountBySessionId={attendanceCountBySessionId}
+                  assignmentsBySessionId={assignmentsBySessionId}
+                  pendingFeedbackBySessionId={pendingFeedbackBySessionId}
+                  onEditSession={handleEditSession}
+                  onAddAssignment={handleAddAssignmentToSession}
+                  onViewAssignmentReports={handleViewAssignmentReportsForSession}
+                  onCopyJoinUrl={handleCopyJoinUrl}
+                  onDeleteSession={handleDeleteSession}
+                  onOpenClassDetail={(session) => onOpenClassDetail?.(session.id)}
                   loadingMeetingId={actionBusyMeetingId}
                 />
+              </table>
+              <div className="student-classes-table-foot">
+                <p>
+                  Showing {Math.min(visibleUpcomingSessions.length, 6)} of {upcomingSessions.length} classes
+                </p>
+                <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
+                  {upcomingClassesExpanded ? 'Show Less' : 'View All'}
+                </button>
               </div>
             </article>
 
-            <article className="live-class-card">
-              <header className="live-class-card-head live-class-card-head-blue">
-                <span className="live-class-card-title">
-                  Past classes &amp; recordings
-                </span>
-              </header>
-              <div className="live-class-card-body">
+            <div className="student-classes-section-head">
+              <h4><Clock3 size={16} /> Past Classes</h4>
+              <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
+                {pastClassesExpanded ? 'Show Less' : 'View All'}
+              </button>
+            </div>
+            <article className="student-classes-table-card is-past-table">
+              <table className="student-classes-table past-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Topic</th>
+                    <th>Status of the class</th>
+                    <th>Attendance</th>
+                    <th>Attachments</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
                 <SessionRows
-                  items={pastSessions}
+                  items={visiblePastSessions}
                   variant="past"
                   onStart={handleStartSession}
-                  onJoin={handleJoinSession}
                   onOpenRecording={handleOpenRecording}
                   onReport={handleViewReport}
+                  assignmentCountBySessionId={assignmentCountBySessionId}
+                  attendanceCountBySessionId={attendanceCountBySessionId}
+                  assignmentsBySessionId={assignmentsBySessionId}
+                  pendingFeedbackBySessionId={pendingFeedbackBySessionId}
+                  onEditSession={handleEditSession}
+                  onAddAssignment={handleAddAssignmentToSession}
+                  onViewAssignmentReports={handleViewAssignmentReportsForSession}
+                  onCopyJoinUrl={handleCopyJoinUrl}
+                  onDeleteSession={handleDeleteSession}
+                  onOpenClassDetail={(session) => onOpenClassDetail?.(session.id)}
                   loadingMeetingId={actionBusyMeetingId}
                 />
+              </table>
+              <div className="student-classes-table-foot">
+                <p>
+                  Showing {Math.min(visiblePastSessions.length, 6)} of {pastSessions.length} classes
+                </p>
+                <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
+                  {pastClassesExpanded ? 'Show Less' : 'View All'}
+                </button>
               </div>
             </article>
 
@@ -1103,278 +2353,559 @@ export function AdminBatchDetailPage({
 
         {activeTab === 'students' ? <AdminStudentsPage onlyBatchId={batchId} /> : null}
 
+        {activeTab === 'community' ? (
+          <BatchCommunityChat
+            batchId={batchId}
+            senderRole="admin"
+            senderName="Admin"
+          />
+        ) : null}
+
         {activeTab === 'schedule' ? (
-          <section className="syllabus-card">
-            <header className="syllabus-card-head">
-              <div>
-                <h3>Syllabus</h3>
-                <p className="muted-dark">
-                  {syllabusSections.length} sections • {totalSyllabusLessons} lessons
-                </p>
+          <section className="schedule-redesign-wrap">
+            <article className="schedule-card">
+              <div className="schedule-card-head">
+                <h3>Program Journey</h3>
+                <p>Your path to become a successful Business Analyst</p>
               </div>
-              <button
-                type="button"
-                className="batch-link-btn"
-                onClick={() => setSectionFormOpen((prev) => !prev)}
-              >
-                <Plus size={14} />
-                Add section
-              </button>
-            </header>
-
-            {sectionFormOpen ? (
-              <form className="syllabus-inline-form" onSubmit={handleCreateSection}>
-                <input
-                  type="text"
-                  placeholder="Section title (e.g. Week 1)"
-                  value={sectionTitle}
-                  onChange={(event) => setSectionTitle(event.target.value)}
-                  required
-                />
-                <button type="submit" className="batch-link-btn">
-                  Create
-                </button>
-              </form>
-            ) : null}
-
-            {syllabusSections.length === 0 ? (
-              <p className="muted-dark batch-empty">
-                No sections yet. Add your first section to start organizing live
-                classes and learning content.
-              </p>
-            ) : (
-              <ul className="syllabus-section-list">
-                {syllabusSections.map((section, index) => {
-                  const expanded = expandedSectionIds.includes(section.id)
+              <div className="schedule-journey-track">
+                {[
+                  { month: 'Month 1', title: 'Training', badge: 'Weeks 1 - 4' },
+                  { month: 'Month 2', title: 'Projects & Revision', badge: 'Weeks 5 - 8' },
+                  { month: 'Month 3', title: 'Interview Preparation', badge: 'Ongoing Phase' },
+                  { month: 'Month 4', title: 'Support & Improvement', badge: 'Ongoing Phase' },
+                ].map((step, index) => {
+                  const weekAnchor = Math.min(8, index * 4 + 1)
+                  const state =
+                    currentScheduleWeek > weekAnchor
+                      ? 'completed'
+                      : currentScheduleWeek === weekAnchor
+                        ? 'active'
+                        : 'upcoming'
                   return (
-                    <li key={section.id} className="syllabus-section-item">
-                      <button
-                        type="button"
-                        className="syllabus-section-toggle"
-                        onClick={() => toggleSectionExpanded(section.id)}
-                      >
-                        <span className="syllabus-section-index">
-                          {String(index + 1).padStart(2, '0')}
-                        </span>
-                        <span className="syllabus-section-title-wrap">
-                          <span className="syllabus-section-title">{section.title}</span>
-                          <span className="muted-dark">
-                            {section.items.length} lesson
-                            {section.items.length === 1 ? '' : 's'}
-                          </span>
-                        </span>
-                        {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                      </button>
-
-                      {expanded ? (
-                        <div className="syllabus-section-body">
-                          {section.items.length === 0 ? (
-                            <p className="muted-dark batch-empty">No content yet.</p>
-                          ) : (
-                            <ul className="syllabus-content-list">
-                              {section.items.map((item) => (
-                                <li key={item.id} className="syllabus-content-item">
-                                  <span className="tag-pill badge-blue">
-                                    {item.type.replaceAll('_', ' ')}
-                                  </span>
-                                  <span className="syllabus-content-title">
-                                    {item.title}
-                                  </span>
-                                  {item.url ? (
-                                    <a
-                                      href={item.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="batch-link"
-                                    >
-                                      <LinkIcon size={13} /> Open
-                                    </a>
-                                  ) : null}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-
-                          {activeItemSectionId === section.id ? (
-                            <form
-                              className="syllabus-inline-form syllabus-inline-form-item"
-                              onSubmit={handleCreateSyllabusItem}
-                            >
-                              <select
-                                value={itemForm.type}
-                                onChange={(event) =>
-                                  setItemForm((prev) => ({
-                                    ...prev,
-                                    type: event.target.value as SyllabusItemType,
-                                  }))
-                                }
-                              >
-                                <option value="live_class">Live class</option>
-                                <option value="document">Document</option>
-                                <option value="class_upload">Class upload</option>
-                              </select>
-
-                              {itemForm.type === 'live_class' ? (
-                                <select
-                                  value={itemForm.classSessionId}
-                                  onChange={(event) =>
-                                    setItemForm((prev) => ({
-                                      ...prev,
-                                      classSessionId: event.target.value,
-                                    }))
-                                  }
-                                  required
-                                >
-                                  <option value="">Select class</option>
-                                  {sessions.map((session) => (
-                                    <option key={session.id} value={session.id}>
-                                      {session.title}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : null}
-
-                              <input
-                                type="text"
-                                placeholder="Content title"
-                                value={itemForm.title}
-                                onChange={(event) =>
-                                  setItemForm((prev) => ({
-                                    ...prev,
-                                    title: event.target.value,
-                                  }))
-                                }
-                                required={itemForm.type !== 'live_class'}
-                              />
-
-                              {itemForm.type !== 'live_class' ? (
-                                <input
-                                  type="url"
-                                  placeholder="Resource URL"
-                                  value={itemForm.url}
-                                  onChange={(event) =>
-                                    setItemForm((prev) => ({
-                                      ...prev,
-                                      url: event.target.value,
-                                    }))
-                                  }
-                                />
-                              ) : null}
-
-                              <button type="submit" className="batch-link-btn">
-                                <FileText size={13} />
-                                Add content
-                              </button>
-                            </form>
-                          ) : (
-                            <button
-                              type="button"
-                              className="batch-link-btn"
-                              onClick={() => handleOpenItemForm(section.id)}
-                            >
-                              <Plus size={13} />
-                              Add content
-                            </button>
-                          )}
-                        </div>
-                      ) : null}
-                    </li>
+                    <div key={step.month} className={`schedule-journey-step is-${state}`}>
+                      <div className="schedule-journey-step-top">
+                        <span className="schedule-journey-dot">{index + 1}</span>
+                        {index < 3 ? <span className="schedule-journey-line" /> : null}
+                      </div>
+                      <p>{step.month}</p>
+                      <h4>{step.title}</h4>
+                      <span className="schedule-journey-badge">{step.badge}</span>
+                    </div>
                   )
                 })}
-              </ul>
-            )}
+              </div>
+            </article>
+
+            <article className="schedule-card">
+              <div className="schedule-card-head">
+                <h3>Learning Schedule (Weeks 1 - 8)</h3>
+                <p>Detailed weekly plan for first 2 months</p>
+              </div>
+              <div className="schedule-week-list">
+                {PROGRAM_WEEKS.map((item) => {
+                  const status =
+                    item.week < currentScheduleWeek
+                      ? 'completed'
+                      : item.week === currentScheduleWeek
+                        ? 'in_progress'
+                        : 'upcoming'
+                  const isOpen = expandedScheduleWeeks.includes(item.week)
+                  return (
+                    <article key={item.week} className="schedule-week-card">
+                      <button
+                        type="button"
+                        className="schedule-week-head"
+                        onClick={() =>
+                          setExpandedScheduleWeeks((prev) =>
+                            prev.includes(item.week)
+                              ? prev.filter((week) => week !== item.week)
+                              : [...prev, item.week],
+                          )
+                        }
+                      >
+                        <div className="schedule-week-head-left">
+                          <div className={`schedule-week-indicator is-${status}`} aria-hidden="true" />
+                          <div>
+                            <p className="schedule-week-label">Week {item.week}</p>
+                            <span className="schedule-week-days">{item.dayRange}</span>
+                          </div>
+                          <div>
+                            <h4>{item.title}</h4>
+                          </div>
+                        </div>
+                        <div className="schedule-week-head-right">
+                          <span className={`schedule-week-status is-${status}`}>
+                            {status === 'in_progress' ? 'In Progress' : status === 'completed' ? 'Completed' : 'Upcoming'}
+                          </span>
+                          {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        </div>
+                      </button>
+                      {isOpen ? (
+                        <div className="schedule-week-body">
+                          {item.topics.map((topic) => (
+                            <div key={topic} className="schedule-week-topic-row">
+                              <div>
+                                <p className="schedule-week-topic-label">Topic</p>
+                                <h5>{topic}</h5>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  )
+                })}
+              </div>
+            </article>
+
+            <article className="schedule-phase-card is-month3">
+              <div className="schedule-phase-head">
+                <h3>Month 3 - Interview Preparation</h3>
+                <span>Ongoing Phase</span>
+              </div>
+              <p>
+                You will focus on preparing for real interviews and improving
+                confidence.
+              </p>
+              <div className="schedule-phase-points">
+                {[
+                  'Mock Interviews',
+                  'Resume Improvements',
+                  'Real Interview Scenarios',
+                  'Confidence Building',
+                  'Project Explanation Practice',
+                  'Q&A Sessions',
+                ].map((point) => (
+                  <p key={point}>
+                    <CheckCircle2 size={14} />
+                    {point}
+                  </p>
+                ))}
+              </div>
+            </article>
+
+            <article className="schedule-phase-card is-month4">
+              <div className="schedule-phase-head">
+                <h3>Month 4 - Support & Improvement</h3>
+                <span>Ongoing Phase</span>
+              </div>
+              <div className="schedule-phase-points">
+                {[
+                  'Continuous Support',
+                  'Placement Assistance',
+                  'Doubt Clarification',
+                  'Skill Improvement',
+                  'Feedback After Interviews',
+                ].map((point) => (
+                  <p key={point}>
+                    <CheckCircle2 size={14} />
+                    {point}
+                  </p>
+                ))}
+              </div>
+            </article>
           </section>
         ) : null}
 
         {activeTab === 'announcements' ? (
           <div className="batch-announcements-wrap">
-            <form className="batch-announce-compose" onSubmit={handleCreateAnnouncement}>
-              <div className="batch-announce-compose-head">
-                <h4>Send Announcement</h4>
-                <label className="batch-announce-important-toggle">
-                  <input
-                    type="checkbox"
-                    checked={announcementForm.isImportant}
-                    onChange={(event) =>
-                      setAnnouncementForm((prev) => ({
-                        ...prev,
-                        isImportant: event.target.checked,
-                      }))
-                    }
-                  />
-                  Mark as important
-                </label>
+            <div className="batch-announce-compose-card">
+              <div className="batch-announce-compose-titlebar">
+                <span className="batch-announce-compose-title-icon" aria-hidden="true">
+                  <Megaphone size={15} />
+                </span>
+                <div>
+                  <h4>Create Announcement</h4>
+                  <p>Share important updates with your students</p>
+                </div>
               </div>
-              <input
-                type="text"
-                placeholder="Announcement title"
-                value={announcementForm.title}
-                onChange={(event) =>
-                  setAnnouncementForm((prev) => ({
-                    ...prev,
-                    title: event.target.value,
-                  }))
-                }
-                required
-              />
-              <textarea
-                placeholder="Write announcement message"
-                value={announcementForm.body}
-                onChange={(event) =>
-                  setAnnouncementForm((prev) => ({
-                    ...prev,
-                    body: event.target.value,
-                  }))
-                }
-                rows={4}
-                required
-              />
-              <div className="batch-announce-compose-actions">
+              <form className="batch-announce-compose" onSubmit={handleCreateAnnouncement}>
+                <input
+                  type="text"
+                  className="batch-announce-title-input"
+                  placeholder="Title"
+                  value={announcementForm.title}
+                  onChange={(event) =>
+                    setAnnouncementForm((prev) => ({
+                      ...prev,
+                      title: event.target.value,
+                    }))
+                  }
+                  required
+                />
+                <textarea
+                  className={`batch-announce-message-input ${announceMessageFocused ? 'is-expanded' : ''}`}
+                  placeholder="Write announcement..."
+                  value={announcementForm.body}
+                  onFocus={() => setAnnounceMessageFocused(true)}
+                  onBlur={() => setAnnounceMessageFocused(false)}
+                  onChange={(event) =>
+                    setAnnouncementForm((prev) => ({
+                      ...prev,
+                      body: event.target.value,
+                    }))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      const title = announcementForm.title.trim()
+                      const body = announcementForm.body.trim()
+                      if (!title || !body || announcementSaving) return
+                      ;(event.currentTarget.form as HTMLFormElement | null)?.requestSubmit()
+                    }
+                  }}
+                  rows={1}
+                  required
+                />
+                <button
+                  type="button"
+                  className="batch-announce-attach-btn"
+                  aria-label="Attach file"
+                  title={announcementAttachmentFile ? announcementAttachmentFile.name : 'Attach poster/file'}
+                  onClick={() => announcementAttachmentInputRef.current?.click()}
+                >
+                  <Paperclip size={16} />
+                </button>
+                <input
+                  ref={announcementAttachmentInputRef}
+                  type="file"
+                  className="batch-community-hidden-file"
+                  accept="image/*,.pdf,.doc,.docx,.ppt,.pptx"
+                  onChange={(event) => setAnnouncementAttachmentFile(event.target.files?.[0] ?? null)}
+                />
+                <button
+                  type="button"
+                  className={`batch-announce-important-toggle ${announcementForm.isImportant ? 'is-active' : ''}`}
+                  onClick={() =>
+                    setAnnouncementForm((prev) => ({
+                      ...prev,
+                      isImportant: !prev.isImportant,
+                    }))
+                  }
+                >
+                  <Star size={13} />
+                  Mark Important
+                </button>
                 <button
                   type="submit"
-                  className="batch-schedule-submit"
-                  disabled={announcementSaving}
+                  className="batch-announce-send-btn"
+                  disabled={announcementSaving || !announcementForm.title.trim() || !announcementForm.body.trim()}
                 >
-                  {announcementSaving ? 'Publishing...' : 'Send Announcement'}
+                  <Megaphone size={14} />
+                  <span>{announcementSaving ? 'Sending...' : 'Send'}</span>
                 </button>
-              </div>
-            </form>
+              </form>
+            {announcementAttachmentFile ? (
+              <p className="batch-announce-toast">Attached: {announcementAttachmentFile.name}</p>
+            ) : null}
+            </div>
+            {announcementToast ? <p className="batch-announce-toast">{announcementToast}</p> : null}
 
             {announcements.length === 0 ? (
               <p className="muted-dark batch-empty">
                 No announcements for this batch yet.
               </p>
             ) : (
-              <ul className="batch-announce-list">
-                {announcements.map((a) => (
-                  <li key={a.id} className="batch-announce-card">
-                    <div className="batch-announce-top">
-                      <p className="batch-announce-title">{a.title}</p>
-                      {a.is_important ? (
-                        <span className="important-tag">Important</span>
-                      ) : null}
-                    </div>
-                    <p className="batch-announce-body">{a.body}</p>
-                    <p className="muted-dark batch-announce-date">
-                      {formatDateTime(a.published_at)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+              <section className="student-announcements-list">
+                {announcements.map((item) => {
+                  const summary = announcementReactionSummary.get(item.id) ?? {
+                    counts: { thumbs_up: 0, fire: 0, clap: 0, heart: 0 },
+                    reactedStudentCount: 0,
+                  }
+                  const reactionConfig: Array<{ id: 'thumbs_up' | 'fire' | 'clap' | 'heart'; emoji: string }> = [
+                    { id: 'thumbs_up', emoji: '👍' },
+                    { id: 'fire', emoji: '🔥' },
+                    { id: 'clap', emoji: '👏' },
+                    { id: 'heart', emoji: '❤️' },
+                  ]
+                  return (
+                    <article key={item.id} className="student-announcement-card">
+                      <div className="student-announcement-top">
+                        <div className="student-announcement-left">
+                          <span className="student-announcement-icon">
+                            <Megaphone size={15} />
+                          </span>
+                          <div className="student-announcement-copy">
+                            {editingAnnouncementId === item.id ? (
+                              <input
+                                type="text"
+                                className="batch-announce-inline-input"
+                                value={editingAnnouncementForm.title}
+                                onChange={(event) =>
+                                  setEditingAnnouncementForm((prev) => ({
+                                    ...prev,
+                                    title: event.target.value,
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <h4>{item.title}</h4>
+                            )}
+                            <p className="student-announcement-meta">
+                              {new Date(item.published_at).toLocaleDateString([], { weekday: 'long' })},{' '}
+                              {new Date(item.published_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            </p>
+                            {editingAnnouncementId === item.id ? (
+                              <textarea
+                                className="batch-announce-inline-textarea"
+                                value={editingAnnouncementForm.body}
+                                onChange={(event) =>
+                                  setEditingAnnouncementForm((prev) => ({
+                                    ...prev,
+                                    body: event.target.value,
+                                  }))
+                                }
+                                rows={3}
+                              />
+                            ) : (
+                              <p className="student-announcement-body">{item.body}</p>
+                            )}
+                            {item.attachment_url ? (
+                              <a
+                                className="batch-announce-attachment-link"
+                                href={item.attachment_url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(item.attachment_url) ? (
+                                  <img
+                                    className="batch-announce-attachment-image"
+                                    src={item.attachment_url}
+                                    alt="Announcement attachment"
+                                  />
+                                ) : (
+                                  <span>Open attachment</span>
+                                )}
+                              </a>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="student-announcement-bottom">
+                        <div className="student-announcement-reactions">
+                          {reactionConfig
+                            .filter((reaction) => summary.counts[reaction.id] > 0)
+                            .map((reaction) => (
+                              <span key={reaction.id}>
+                                {reaction.emoji} {summary.counts[reaction.id]}
+                              </span>
+                            ))}
+                        </div>
+                        <div className="student-announcement-reacted">
+                          <div className="student-announcement-avatars">
+                            <span />
+                            <span />
+                            <span />
+                          </div>
+                          <p>{summary.reactedStudentCount} students reacted</p>
+                          <div className="admin-announcement-actions">
+                            {editingAnnouncementId === item.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="admin-announcement-action-btn is-primary"
+                                  disabled={announcementActionId === item.id}
+                                  onClick={() => handleSaveAnnouncementEdit(item.id)}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-announcement-action-btn"
+                                  disabled={announcementActionId === item.id}
+                                  onClick={handleCancelEditAnnouncement}
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="admin-announcement-action-btn"
+                                  disabled={announcementActionId === item.id}
+                                  onClick={() => handleStartEditAnnouncement(item)}
+                                >
+                                  <Pencil size={12} />
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-announcement-action-btn is-danger"
+                                  disabled={announcementActionId === item.id}
+                                  onClick={() => handleDeleteAnnouncement(item.id)}
+                                >
+                                  <Trash2 size={12} />
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </section>
             )}
           </div>
         ) : null}
 
         {activeTab === 'assignments' ? (
-          <div className="batch-assignments-placeholder">
-            <ClipboardList size={32} className="batch-assignments-icon" />
-            <h4 className="batch-assignments-title">Assignments</h4>
-            <p className="muted-dark">
-              There is no assignments table in the database yet. Next steps:
-              add an <code>assignments</code> table (title, due date, batch_id,
-              optional file URL), or surface <strong>progress activities</strong>{' '}
-              here as coursework.
-            </p>
+          <div className="batch-assignments-wrap">
+            {assignments.length === 0 ? (
+              <div className="batch-assignments-placeholder">
+                <ClipboardList size={32} className="batch-assignments-icon" />
+                <h4 className="batch-assignments-title">No assignments yet</h4>
+                <p className="muted-dark">
+                  Use <strong>Schedule Class</strong> and enable
+                  <strong> Add Assignment for this Class</strong> to create one.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="student-assignments-table-wrap admin-assignments-table-wrap">
+                  <table className="student-assignments-table">
+                    <thead>
+                      <tr>
+                        <th>Assignment</th>
+                        <th>Due Date</th>
+                        <th>Submissions</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedAssignmentRows.map(({ assignment, submittedCount }) => {
+                        return (
+                          <tr key={assignment.id}>
+                            <td>
+                              <div className="student-assignment-cell-main">
+                                <span className="student-assignment-icon">
+                                  <FileText size={14} />
+                                </span>
+                                <div>
+                                  <p>{assignment.title}</p>
+                                  <small>
+                                    {assignment.description || 'Submit details available in assignment view.'}
+                                  </small>
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="student-assignment-due-cell">
+                                <p>{formatDateOnly(assignment.due_at)}</p>
+                                <small>
+                                  {new Date(assignment.due_at).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true,
+                                  })}
+                                </small>
+                              </div>
+                            </td>
+                            <td>
+                              <p className="student-assignment-marks">
+                                <Users size={13} /> {submittedCount}
+                              </p>
+                            </td>
+                            <td>
+                              <div className="student-assignment-actions">
+                                <button
+                                  type="button"
+                                  className="student-assignment-primary-btn admin-assignment-primary-btn"
+                                  onClick={() => onOpenAssignment?.(assignment.id, batchId)}
+                                >
+                                  View Assignment Details
+                                </button>
+                                <div className="class-card-menu-wrap">
+                                  <button
+                                    type="button"
+                                    className="student-assignment-more-btn"
+                                    aria-label="More actions"
+                                    onClick={() =>
+                                      setOpenAssignmentMenuId((prev) =>
+                                        prev === assignment.id ? null : assignment.id,
+                                      )
+                                    }
+                                  >
+                                    <MoreVertical size={15} />
+                                  </button>
+                                  {openAssignmentMenuId === assignment.id ? (
+                                    <div className="class-card-menu">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          handleEditAssignment(assignment)
+                                          setOpenAssignmentMenuId(null)
+                                        }}
+                                      >
+                                        <Pencil size={14} />
+                                        Edit Assignment
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          onOpenAssignment?.(assignment.id, batchId)
+                                          setOpenAssignmentMenuId(null)
+                                        }}
+                                      >
+                                        <ClipboardList size={14} />
+                                        Open Details
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="danger"
+                                        onClick={() => {
+                                          void handleDeleteAssignment(assignment.id)
+                                          setOpenAssignmentMenuId(null)
+                                        }}
+                                      >
+                                        <Trash2 size={14} />
+                                        Delete Assignment
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="student-assignments-footer">
+                  <p>
+                    Showing {assignmentRows.length ? (assignmentPage - 1) * assignmentPageSize + 1 : 0} to{' '}
+                    {Math.min(assignmentPage * assignmentPageSize, assignmentRows.length)} of {assignmentRows.length} assignments
+                  </p>
+                  <div className="student-assignments-pagination">
+                    <button
+                      type="button"
+                      disabled={assignmentPage <= 1}
+                      onClick={() => setAssignmentPage((prev) => Math.max(1, prev - 1))}
+                    >
+                      {'<'}
+                    </button>
+                    <button type="button" className="active">
+                      {assignmentPage}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={assignmentPage >= assignmentTotalPages}
+                      onClick={() =>
+                        setAssignmentPage((prev) => Math.min(assignmentTotalPages, prev + 1))
+                      }
+                    >
+                      {'>'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ) : null}
       </div>
@@ -1418,116 +2949,331 @@ export function AdminBatchDetailPage({
         <div className="batch-schedule-modal-overlay" role="presentation">
           <div className="batch-schedule-modal">
             <div className="batch-schedule-modal-head">
-              <h3>Schedule Zoom Class</h3>
+              <div className="batch-schedule-modal-title">
+                <h3>
+                  {scheduleForm.classSessionId ? 'Edit Class' : 'Create New Class'}
+                </h3>
+                <p>Schedule a new class for this batch</p>
+              </div>
               <button
                 type="button"
                 className="batch-schedule-close"
                 onClick={() => !scheduleBusy && setScheduleOpen(false)}
+                aria-label="Close schedule drawer"
               >
-                Close
+                ×
               </button>
             </div>
             <form className="batch-schedule-form" onSubmit={handleScheduleSubmit}>
-              <label className="batch-schedule-field batch-schedule-field-full">
-                Topic
-                <input
-                  type="text"
-                  placeholder="Enter class topic"
-                  value={scheduleForm.topic}
-                  onChange={(event) =>
-                    setScheduleForm((prev) => ({
-                      ...prev,
-                      topic: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </label>
-              <label className="batch-schedule-field">
-                Date
-                <input
-                  type="date"
-                  value={scheduleForm.date}
-                  onChange={(event) =>
-                    setScheduleForm((prev) => ({
-                      ...prev,
-                      date: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </label>
-              <label className="batch-schedule-field">
-                Time
-                <input
-                  type="time"
-                  value={scheduleForm.time}
-                  onChange={(event) =>
-                    setScheduleForm((prev) => ({
-                      ...prev,
-                      time: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </label>
-              <label className="batch-schedule-field">
-                Duration
-                <select
-                  value={scheduleForm.duration}
-                  onChange={(event) =>
-                    setScheduleForm((prev) => ({
-                      ...prev,
-                      duration: Number(event.target.value),
-                    }))
-                  }
-                >
-                  <option value={30}>30 minutes</option>
-                  <option value={45}>45 minutes</option>
-                  <option value={60}>60 minutes</option>
-                  <option value={90}>90 minutes</option>
-                </select>
-              </label>
-              <label className="batch-schedule-field">
-                Host
-                <select
-                  value={scheduleForm.hostUserId}
-                  onChange={(event) =>
-                    setScheduleForm((prev) => ({
-                      ...prev,
-                      hostUserId: event.target.value,
-                    }))
-                  }
-                  required
-                >
-                  {!zoomHosts.length ? (
-                    <option value="">
-                      {hostsLoading ? 'Loading hosts...' : 'No hosts available'}
-                    </option>
+              <section className="batch-schedule-class-card">
+                <h4>Class Details</h4>
+                <div className="batch-schedule-class-grid">
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Class Title *
+                    <div ref={scheduleTopicBoxRef} className="create-class-topic-combobox">
+                      <div className="create-class-topic-input-wrap">
+                        <input
+                          type="text"
+                          value={scheduleTopicValue}
+                          onFocus={() => setScheduleTopicOpen(true)}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            setScheduleForm((prev) => ({
+                              ...prev,
+                              topicSelection: TOPIC_OPTION_OTHERS,
+                              customTopic: value,
+                            }))
+                            setScheduleTopicOpen(true)
+                          }}
+                          placeholder="Search or type class topic"
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="create-class-topic-chevron"
+                          onClick={() => setScheduleTopicOpen((open) => !open)}
+                          aria-label="Toggle topics list"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
+                      {scheduleTopicOpen ? (
+                        <div className="create-class-topic-dropdown">
+                          {filteredScheduleTopics.length ? (
+                            <ul>
+                              {filteredScheduleTopics.map((topic) => (
+                                <li key={topic}>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault()
+                                      setScheduleForm((prev) => ({
+                                        ...prev,
+                                        topicSelection: topic,
+                                        customTopic: '',
+                                      }))
+                                      setScheduleTopicOpen(false)
+                                    }}
+                                  >
+                                    {topic}
+                                  </button>
+                                </li>
+                              ))}
+                              <li>
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault()
+                                    setScheduleForm((prev) => ({
+                                      ...prev,
+                                      topicSelection: TOPIC_OPTION_OTHERS,
+                                      customTopic: prev.customTopic || '',
+                                    }))
+                                    setScheduleTopicOpen(false)
+                                  }}
+                                >
+                                  Others
+                                </button>
+                              </li>
+                            </ul>
+                          ) : (
+                            <p>No matching topics. You can type a custom title.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </label>
+                  {scheduleForm.topicSelection === TOPIC_OPTION_OTHERS ? (
+                    <label className="batch-schedule-field batch-schedule-field-full">
+                      Topic Name *
+                      <input
+                        type="text"
+                        placeholder="Enter topic name"
+                        value={scheduleForm.customTopic}
+                        onChange={(event) =>
+                          setScheduleForm((prev) => ({
+                            ...prev,
+                            customTopic: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </label>
                   ) : null}
-                  {zoomHosts.map((host) => (
-                    <option key={host.id} value={host.id}>
-                      {(host.first_name || '').trim() ||
-                        host.display_name.split(' ')[0] ||
-                        host.display_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="batch-schedule-field">
-                Attachment (optional)
+
+                  <label className="batch-schedule-field">
+                    Date & Time *
+                    <input
+                      type="datetime-local"
+                      value={
+                        scheduleForm.date && scheduleForm.time
+                          ? `${scheduleForm.date}T${scheduleForm.time}`
+                          : ''
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value
+                        const [dateValue, timeValue] = value.split('T')
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          date: dateValue ?? '',
+                          time: timeValue ?? '',
+                        }))
+                      }}
+                      required
+                    />
+                  </label>
+
+                  <label className="batch-schedule-field">
+                    Duration *
+                    <select
+                      value={scheduleForm.duration}
+                      onChange={(event) =>
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          duration: Number(event.target.value),
+                        }))
+                      }
+                    >
+                      <option value={30}>30 minutes</option>
+                      <option value={45}>45 minutes</option>
+                      <option value={60}>60 minutes</option>
+                      <option value={90}>90 minutes</option>
+                    </select>
+                  </label>
+
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Host *
+                    <select
+                      value={scheduleForm.hostUserId}
+                      onChange={(event) =>
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          hostUserId: event.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      {!zoomHosts.length ? (
+                        <option value="">
+                          {hostsLoading ? 'Loading hosts...' : 'No hosts available'}
+                        </option>
+                      ) : null}
+                      {zoomHosts.map((host) => (
+                        <option key={host.id} value={host.id}>
+                          {(host.first_name || '').trim() ||
+                            host.display_name.split(' ')[0] ||
+                            host.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Class Attachment (Optional)
+                    <button
+                      type="button"
+                      className="class-attachment-upload-btn"
+                      onClick={() => classAttachmentInputRef.current?.click()}
+                    >
+                      <Upload size={20} />
+                      Upload File
+                    </button>
+                    <input
+                      ref={classAttachmentInputRef}
+                      type="file"
+                      className="student-assignment-hidden-file-input"
+                      accept=".zip,.rar,.pdf,.doc,.docx"
+                      onChange={(event) =>
+                        setClassAttachmentFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                    {classAttachmentFile ? (
+                      <p className="student-assignment-selected-file">
+                        Selected: {classAttachmentFile.name}
+                      </p>
+                    ) : null}
+                  </label>
+                </div>
+              </section>
+              <label className="batch-schedule-field batch-schedule-field-full batch-schedule-toggle-row">
                 <input
-                  type="url"
-                  placeholder="Paste drive/file link"
-                  value={scheduleForm.attachmentUrl}
+                  type="checkbox"
+                  checked={scheduleForm.addAssignment}
                   onChange={(event) =>
                     setScheduleForm((prev) => ({
                       ...prev,
-                      attachmentUrl: event.target.value,
+                      addAssignment: event.target.checked,
                     }))
                   }
                 />
+                <div className="batch-schedule-toggle-text">
+                  <span>Add Assignment</span>
+                </div>
               </label>
+
+              {scheduleForm.addAssignment ? (
+                <div className="batch-assignment-block">
+                  <div className="batch-assignment-block-head">
+                    <h4>Assignment Details</h4>
+                  </div>
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Assignment Title *
+                    <input
+                      type="text"
+                      placeholder="Enter assignment title"
+                      value={scheduleForm.assignmentTitle}
+                      onChange={(event) =>
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          assignmentTitle: event.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </label>
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Description (Optional)
+                    <input
+                      type="text"
+                      placeholder="Enter description (optional)"
+                      value={scheduleForm.assignmentDescription}
+                      onChange={(event) =>
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          assignmentDescription: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Assignment Attachment (Optional)
+                    <small className="batch-schedule-upload-hint">
+                      Upload assignment file or instructions
+                    </small>
+                    <button
+                      type="button"
+                      className={`student-assignment-upload-box ${assignmentAttachmentDragOver ? 'drag-over' : ''}`}
+                      onDragOver={(event) => {
+                        event.preventDefault()
+                        setAssignmentAttachmentDragOver(true)
+                      }}
+                      onDragLeave={() => setAssignmentAttachmentDragOver(false)}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        setAssignmentAttachmentDragOver(false)
+                        setAssignmentAttachmentFile(event.dataTransfer.files?.[0] ?? null)
+                      }}
+                      onClick={() => assignmentAttachmentInputRef.current?.click()}
+                    >
+                      <Upload size={20} />
+                      <strong>Drag &amp; drop file here or</strong>
+                      <span className="class-attachment-upload-browse">Browse File</span>
+                      <small>Supported: PDF, DOC, DOCX, PPT, PTX, ZIP (Max. 25MB)</small>
+                    </button>
+                    <input
+                      ref={assignmentAttachmentInputRef}
+                      type="file"
+                      className="student-assignment-hidden-file-input"
+                      accept=".pdf,.doc,.docx,.zip,.rar"
+                      onChange={(event) =>
+                        setAssignmentAttachmentFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                    {assignmentAttachmentFile ? (
+                      <small className="muted-dark">Selected: {assignmentAttachmentFile.name}</small>
+                    ) : null}
+                    {scheduleForm.assignmentAttachmentUrl ? (
+                      <small className="muted-dark">
+                        Existing file attached. Upload a new file only if you want to replace it.
+                      </small>
+                    ) : null}
+                  </label>
+                  <label className="batch-schedule-field batch-schedule-field-full">
+                    Due Date &amp; Time *
+                    <input
+                      type="datetime-local"
+                      value={
+                        scheduleForm.assignmentDueDate && scheduleForm.assignmentDueTime
+                          ? `${scheduleForm.assignmentDueDate}T${scheduleForm.assignmentDueTime}`
+                          : ''
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value
+                        const [dateValue, timeValue] = value.split('T')
+                        setScheduleForm((prev) => ({
+                          ...prev,
+                          assignmentDueDate: dateValue ?? '',
+                          assignmentDueTime: timeValue ?? '',
+                        }))
+                      }}
+                      required
+                    />
+                  </label>
+                  <div className="batch-assignment-info-note">
+                    Students will be able to view this assignment after the class is completed.
+                  </div>
+                </div>
+              ) : null}
               <p className="batch-schedule-hint">
                 Default timezone: IST (Asia/Kolkata)
               </p>
@@ -1550,13 +3296,18 @@ export function AdminBatchDetailPage({
                   className="batch-schedule-submit"
                   disabled={scheduleBusy}
                 >
-                  {scheduleBusy ? 'Scheduling...' : 'Schedule Class'}
+                  {scheduleBusy
+                    ? 'Saving...'
+                    : scheduleForm.classSessionId
+                      ? 'Update Class'
+                      : 'Create Class'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       ) : null}
+      </section>
     </div>
   )
 }

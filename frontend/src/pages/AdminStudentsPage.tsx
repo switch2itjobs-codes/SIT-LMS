@@ -1,20 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  BadgeAlert,
   CalendarDays,
+  GraduationCap,
   GripVertical,
   Pin,
   PinOff,
   Plus,
   Search,
+  Target,
+  Trophy,
   UserPlus,
   Users,
+  Wallet,
   X,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import {
+  MultiSelectFilter,
+  type MultiSelectOption,
+} from '../components/MultiSelectFilter'
 
 type StudentRow = {
   id: string
@@ -39,11 +49,6 @@ type StudentRow = {
   no_of_applications: number
   no_of_interviews: number
   offers_received: number
-}
-
-type FilterOption = {
-  label: string
-  value: string
 }
 
 type ColumnKey =
@@ -93,8 +98,11 @@ const defaultVisibleColumns: ColumnKey[] = [
   'phone',
   'progress_pct',
   'attendance_pct',
+  'no_of_interviews',
   'payment_status',
 ]
+
+const pageSizeOptions = [25, 50, 100, 200] as const
 
 type AdminStudentsPageProps = {
   onlyBatchId?: string
@@ -160,22 +168,25 @@ const bulkFieldConfigs: BulkFieldConfig[] = [
   { key: 'experience_years', label: 'Experience (years)', inputType: 'number' },
   { key: 'attendance_pct', label: 'Attendance %', inputType: 'number' },
   { key: 'progress_pct', label: 'Progress %', inputType: 'number' },
-  { key: 'trainer_rating', label: 'Trainer Rating', inputType: 'number' },
+  { key: 'trainer_rating', label: 'Rating (1-3)', inputType: 'number' },
   { key: 'no_of_applications', label: 'No. of Applications', inputType: 'number' },
   { key: 'no_of_interviews', label: 'No. of Interviews', inputType: 'number' },
   { key: 'offers_received', label: 'Offers Received', inputType: 'number' },
 ]
 
 export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [students, setStudents] = useState<StudentRow[]>([])
   const [allBatches, setAllBatches] = useState<SimpleBatch[]>([])
   const [allTrainers, setAllTrainers] = useState<SimpleTrainer[]>([])
   const [search, setSearch] = useState('')
-  const [stageFilter, setStageFilter] = useState('all')
-  const [batchFilter, setBatchFilter] = useState('all')
-  const [paymentFilter, setPaymentFilter] = useState('all')
+  const [stageFilter, setStageFilter] = useState<string[]>([])
+  const [batchFilter, setBatchFilter] = useState<string[]>([])
+  const [paymentFilter, setPaymentFilter] = useState<string[]>([])
+  const [pageSize, setPageSize] = useState<number>(25)
+  const [currentPage, setCurrentPage] = useState<number>(1)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const columnsRef = useRef<HTMLDivElement | null>(null)
 
@@ -199,7 +210,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
         { key: 'enrollment_date', label: 'Enrollment Date', width: 150 },
         { key: 'attendance_pct', label: 'Attendance %', width: 120 },
         { key: 'progress_pct', label: 'Progress %', width: 120 },
-        { key: 'trainer_rating', label: 'Trainer Rating', width: 130 },
+        { key: 'trainer_rating', label: 'Rating', width: 130 },
         { key: 'no_of_applications', label: 'Applications', width: 120 },
         { key: 'no_of_interviews', label: 'Interviews', width: 120 },
         { key: 'offers_received', label: 'Offers', width: 100 },
@@ -408,9 +419,8 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     void loadStudents()
   }, [onlyBatchId])
 
-  const stageOptions: FilterOption[] = useMemo(
+  const stageOptions: MultiSelectOption[] = useMemo(
     () => [
-      { label: 'All stages', value: 'all' },
       { label: 'Training', value: 'training' },
       { label: 'Trial Classes', value: 'trial_classes' },
       { label: 'Mock Interviews', value: 'mock_interviews' },
@@ -421,22 +431,13 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     [],
   )
 
-  const batchOptions: FilterOption[] = useMemo(() => {
-    const codes = Array.from(
-      new Set(
-        students
-          .map((s) => s.primary_batch_code)
-          .filter((code): code is string => Boolean(code)),
-      ),
-    )
-    return [{ label: 'All batches', value: 'all' }].concat(
-      codes.map((code) => ({ label: code, value: code })),
-    )
-  }, [students])
+  const batchOptions: MultiSelectOption[] = useMemo(() => {
+    const codes = Array.from(new Set(allBatches.map((batch) => batch.batch_code)))
+    return codes.map((code) => ({ label: code, value: code }))
+  }, [allBatches])
 
-  const paymentOptions: FilterOption[] = useMemo(
+  const paymentOptions: MultiSelectOption[] = useMemo(
     () => [
-      { label: 'All payments', value: 'all' },
       { label: 'Pending', value: 'pending' },
       { label: 'Partial', value: 'partial' },
       { label: 'Paid', value: 'paid' },
@@ -445,21 +446,111 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
   )
 
   const filteredStudents = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase()
     return students.filter((s) => {
-      const text = `${s.name} ${s.email ?? ''} ${s.phone ?? ''} ${
-        s.primary_batch_code ?? ''
-      } ${s.trainer_name ?? ''}`.toLowerCase()
-      const searchOk = text.includes(search.toLowerCase())
+      const searchableText = `${s.name} ${s.email ?? ''} ${s.phone ?? ''}`.toLowerCase()
+      const searchOk = !normalizedSearch || searchableText.includes(normalizedSearch)
 
-      const stageOk = stageFilter === 'all' || s.stage === stageFilter
+      const stageOk = !stageFilter.length || stageFilter.includes(s.stage)
       const batchOk =
-        batchFilter === 'all' || s.primary_batch_code === batchFilter
+        !batchFilter.length ||
+        (s.primary_batch_code != null && batchFilter.includes(s.primary_batch_code))
       const paymentOk =
-        paymentFilter === 'all' || s.payment_status === paymentFilter
+        !paymentFilter.length || paymentFilter.includes(s.payment_status)
 
       return searchOk && stageOk && batchOk && paymentOk
     })
   }, [students, search, stageFilter, batchFilter, paymentFilter])
+
+  const kpiCards = useMemo(() => {
+    const inCurrentMonth = (dateValue: string | null) => {
+      if (!dateValue) return false
+      const date = new Date(dateValue)
+      const now = new Date()
+      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
+    }
+    const inPreviousMonth = (dateValue: string | null) => {
+      if (!dateValue) return false
+      const date = new Date(dateValue)
+      const now = new Date()
+      const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
+      const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
+      return date.getMonth() === prevMonth && date.getFullYear() === prevYear
+    }
+    const growthFor = (predicate: (student: StudentRow) => boolean) => {
+      const currentCount = students.filter(
+        (student) => predicate(student) && inCurrentMonth(student.enrollment_date),
+      ).length
+      const previousCount = students.filter(
+        (student) => predicate(student) && inPreviousMonth(student.enrollment_date),
+      ).length
+      const growth = ((currentCount - previousCount) / Math.max(previousCount, 1)) * 100
+      return Number.isFinite(growth) ? growth : 0
+    }
+
+    const isActiveTraining = (student: StudentRow) => student.stage === 'training'
+    const isPlacementPhase = (student: StudentRow) =>
+      student.stage === 'mock_interviews' ||
+      student.stage === 'searching_for_jobs' ||
+      student.stage === 'taking_interviews'
+    const isAtRisk = (student: StudentRow) =>
+      (typeof student.attendance_pct === 'number' && student.attendance_pct < 75) ||
+      (typeof student.progress_pct === 'number' && student.progress_pct < 50)
+    const hasPendingPayment = (student: StudentRow) =>
+      student.payment_status !== 'paid' || student.pending_amount > 0
+    const isPlaced = (student: StudentRow) => student.stage === 'placed'
+
+    return [
+      {
+        id: 'total',
+        label: 'Total Students',
+        value: students.length,
+        growth: growthFor(() => true),
+        icon: <Users size={20} />,
+        tone: 'blue',
+      },
+      {
+        id: 'active-training',
+        label: 'Active Training',
+        value: students.filter(isActiveTraining).length,
+        growth: growthFor(isActiveTraining),
+        icon: <GraduationCap size={20} />,
+        tone: 'green',
+      },
+      {
+        id: 'placement-phase',
+        label: 'Placement Phase',
+        value: students.filter(isPlacementPhase).length,
+        growth: growthFor(isPlacementPhase),
+        icon: <Target size={20} />,
+        tone: 'purple',
+      },
+      {
+        id: 'risk',
+        label: 'At Risk Students',
+        value: students.filter(isAtRisk).length,
+        growth: growthFor(isAtRisk),
+        icon: <BadgeAlert size={20} />,
+        tone: 'orange',
+      },
+      {
+        id: 'pending-payments',
+        label: 'Pending Payments',
+        value: students.filter(hasPendingPayment).length,
+        growth: growthFor(hasPendingPayment),
+        icon: <Wallet size={20} />,
+        tone: 'yellow',
+      },
+      {
+        id: 'placed',
+        label: 'Placed Students',
+        value: students.filter(isPlaced).length,
+        growth: growthFor(isPlaced),
+        icon: <Trophy size={20} />,
+        tone: 'emerald',
+      },
+    ]
+  }, [students])
 
   const sortedStudents = useMemo(() => {
     if (!sortState.key || sortState.direction === 'none') return filteredStudents
@@ -531,14 +622,33 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     return sorted
   }, [filteredStudents, sortState])
 
+  const totalRows = sortedStudents.length
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize))
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, stageFilter, batchFilter, paymentFilter, pageSize])
+
+  useEffect(() => {
+    if (currentPage <= totalPages) return
+    setCurrentPage(totalPages)
+  }, [currentPage, totalPages])
+
+  const pageStart = (currentPage - 1) * pageSize
+  const pageEnd = Math.min(pageStart + pageSize, totalRows)
+  const paginatedStudents = useMemo(
+    () => sortedStudents.slice(pageStart, pageEnd),
+    [sortedStudents, pageStart, pageEnd],
+  )
+
   const currentBulkConfig = useMemo(
     () => bulkFieldConfigs.find((config) => config.key === bulkField) ?? bulkFieldConfigs[0],
     [bulkField],
   )
 
   const visibleStudentIds = useMemo(
-    () => sortedStudents.map((student) => student.id),
-    [sortedStudents],
+    () => paginatedStudents.map((student) => student.id),
+    [paginatedStudents],
   )
   const selectedVisibleCount = useMemo(
     () => visibleStudentIds.filter((id) => selectedStudentIds.includes(id)).length,
@@ -666,6 +776,80 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     setIsBulkOpen(true)
   }
 
+  const exportSelectedAsCsv = () => {
+    if (!selectedStudentIds.length) return
+    const selectedSet = new Set(selectedStudentIds)
+    const selectedRows = students.filter((student) => selectedSet.has(student.id))
+    if (!selectedRows.length) return
+
+    const headers = [
+      'Student Name',
+      'Email',
+      'Phone',
+      'Stage',
+      'Batch',
+      'Payment Status',
+      'Pending Amount',
+      'Progress %',
+      'Attendance %',
+      'Interviews',
+      'Offers',
+    ]
+
+    const escapeCsv = (value: string | number | null) =>
+      `"${String(value ?? '').replace(/"/g, '""')}"`
+
+    const lines = selectedRows.map((student) =>
+      [
+        student.name,
+        student.email,
+        student.phone,
+        student.stage,
+        student.primary_batch_code,
+        student.payment_status,
+        student.pending_amount,
+        student.progress_pct,
+        student.attendance_pct,
+        student.no_of_interviews,
+        student.offers_received,
+      ]
+        .map(escapeCsv)
+        .join(','),
+    )
+
+    const csv = `${headers.join(',')}\n${lines.join('\n')}`
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `students-export-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const deleteSelectedStudents = async () => {
+    if (!selectedStudentIds.length) return
+    const confirmed = window.confirm(
+      `Delete ${selectedStudentIds.length} selected student(s)? This cannot be undone.`,
+    )
+    if (!confirmed) return
+
+    const { error: deleteError } = await supabase
+      .from('students')
+      .delete()
+      .in('id', selectedStudentIds)
+
+    if (deleteError) {
+      window.alert(deleteError.message)
+      return
+    }
+
+    setStudents((prev) => prev.filter((student) => !selectedStudentIds.includes(student.id)))
+    setSelectedStudentIds([])
+  }
+
   const handleBulkFieldChange = (value: BulkFieldKey) => {
     setBulkField(value)
     const config = bulkFieldConfigs.find((field) => field.key === value)
@@ -697,7 +881,16 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
         setBulkError('Please enter a valid numeric value.')
         return
       }
-      parsedValue = numberValue
+      if (bulkField === 'trainer_rating') {
+        const roundedRating = Math.round(numberValue)
+        if (roundedRating < 1 || roundedRating > 3) {
+          setBulkError('Rating must be between 1 and 3.')
+          return
+        }
+        parsedValue = roundedRating
+      } else {
+        parsedValue = numberValue
+      }
     }
 
     const updatePayload = {
@@ -760,10 +953,25 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     }
   }
 
+  const normalizeThreeStarRating = (value: number | null) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return null
+    }
+    return Math.min(3, Math.max(1, Math.round(value)))
+  }
+
   const renderCell = (student: StudentRow, key: ColumnKey) => {
     switch (key) {
       case 'name':
-        return <p className="class-title">{student.name}</p>
+        return (
+          <button
+            type="button"
+            className="student-name-link"
+            onClick={() => navigate(`/admin/students/${student.id}`)}
+          >
+            {student.name}
+          </button>
+        )
       case 'email':
         return <p className="class-sub">{student.email ?? '-'}</p>
       case 'phone':
@@ -772,7 +980,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
         return <p className="class-title">{student.primary_batch_code ?? 'Not assigned'}</p>
       case 'stage':
         return (
-          <span className={`tag-pill ${stageBadgeVariant(student.stage)}`}>
+          <span className={`tag-pill stage-tag-pill ${stageBadgeVariant(student.stage)}`}>
             {formatStage(student.stage)}
           </span>
         )
@@ -821,7 +1029,23 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
           </p>
         )
       case 'trainer_rating':
-        return <p className="class-sub">{student.trainer_rating ?? '-'}</p>
+        {
+          const rating = normalizeThreeStarRating(student.trainer_rating)
+          if (!rating) return <p className="class-sub">-</p>
+          return (
+            <span
+              className={`rating-pill rating-pill-${rating}`}
+              aria-label={`Rating ${rating} out of 3`}
+              title={`Rating ${rating}/3`}
+            >
+              {Array.from({ length: 3 }, (_, index) => (
+                <span key={index} className={index < rating ? 'on' : ''}>
+                  ★
+                </span>
+              ))}
+            </span>
+          )
+        }
       case 'no_of_applications':
         return <p className="class-sub">{student.no_of_applications ?? 0}</p>
       case 'no_of_interviews':
@@ -1170,96 +1394,64 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
 
   return (
     <>
-      <section className="panel">
+      <div className={onlyBatchId ? '' : 'students-screen'}>
+      <section className={`panel ${onlyBatchId ? '' : 'students-header-panel'}`}>
         {!onlyBatchId ? (
-          <div className="panel-top">
-            <div>
-              <h3>Students</h3>
-              <p className="muted-dark">
-                View all students, their batches, stages, and payments.
+          <div className="students-header-v2">
+            <div className="students-header-v2-left">
+              <h1>Students</h1>
+              <p>
+                Manage and track all students across batches, training and placement.
               </p>
             </div>
-            <div className="panel-actions">
-              <div className="search-box">
+            <div className="students-header-v2-right">
+              <label className="students-header-search">
                 <Search size={14} />
                 <input
                   type="text"
-                  placeholder="Search"
+                  placeholder="Search by name, email, phone..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
-              </div>
-              {renderColumnsMenu()}
+              </label>
+              <button
+                type="button"
+                className="create-student-btn students-header-moved-add-btn"
+                onClick={() => {
+                  setFormError('')
+                  if (onlyBatchId) {
+                    setFormData((prev) => ({ ...prev, batch_id: onlyBatchId }))
+                  }
+                  setIsCreateOpen(true)
+                }}
+              >
+                <UserPlus size={14} />
+                Add New Student
+              </button>
             </div>
           </div>
         ) : null}
 
-        <div className={`filters-row ${onlyBatchId ? 'filters-row-tight' : ''}`}>
-          <label className="filter-select">
-            <span>Stage</span>
-            <select
-              value={stageFilter}
-              onChange={(e) => setStageFilter(e.target.value)}
-            >
-              {stageOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {!onlyBatchId ? (
-            <label className="filter-select">
-              <span>Batch</span>
-              <select
-                value={batchFilter}
-                onChange={(e) => setBatchFilter(e.target.value)}
-              >
-                {batchOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          <label className="filter-select">
-            <span>Payment</span>
-            <select
-              value={paymentFilter}
-              onChange={(e) => setPaymentFilter(e.target.value)}
-            >
-              {paymentOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {onlyBatchId ? renderColumnsMenu() : null}
-          <button
-            type="button"
-            className="create-student-btn"
-            onClick={() => {
-              setFormError('')
-              if (onlyBatchId) {
-                setFormData((prev) => ({ ...prev, batch_id: onlyBatchId }))
-              }
-              setIsCreateOpen(true)
-            }}
-          >
-            <UserPlus size={14} />
-            Add New Student
-          </button>
-        </div>
         {selectedStudentIds.length ? (
           <div className="bulk-actions-bar">
             <p>{selectedStudentIds.length} students selected</p>
             <div className="bulk-actions-right">
               <button type="button" className="bulk-update-btn" onClick={openBulkUpdate}>
                 Bulk Update
+              </button>
+              <button
+                type="button"
+                className="bulk-export-btn"
+                onClick={exportSelectedAsCsv}
+              >
+                Export (CSV)
+              </button>
+              <button
+                type="button"
+                className="bulk-delete-btn"
+                onClick={() => void deleteSelectedStudents()}
+              >
+                Delete
               </button>
               <button
                 type="button"
@@ -1273,16 +1465,88 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
         ) : null}
       </section>
 
-      <section className={`panel ${onlyBatchId ? 'batch-students-panel' : ''}`}>
+      {!onlyBatchId ? (
+        <section className="students-kpi-row">
+          {kpiCards.map((card) => {
+            const growthText = `${card.growth >= 0 ? '↑' : '↓'} ${Math.abs(card.growth).toFixed(1)}%`
+            return (
+              <article key={card.id} className="students-kpi-card">
+                <div className="students-kpi-top">
+                  <div className={`students-kpi-icon is-${card.tone}`}>{card.icon}</div>
+                  <div className="students-kpi-metric">
+                    <p className="students-kpi-label">{card.label}</p>
+                    <h3 className="students-kpi-value">{card.value}</h3>
+                  </div>
+                </div>
+                <div className="students-kpi-bottom">
+                  <p className={`students-kpi-growth ${card.growth < 0 ? 'is-negative' : ''}`}>
+                    {growthText}
+                  </p>
+                  <span>vs last month</span>
+                </div>
+              </article>
+            )
+          })}
+        </section>
+      ) : null}
+
+      <section className={`panel ${onlyBatchId ? '' : 'students-filters-panel'}`}>
+        <div className="students-filters-bar">
+          <div className={`filters-row ${onlyBatchId ? 'filters-row-tight' : ''}`}>
+            <MultiSelectFilter
+              label="Stage"
+              options={stageOptions}
+              selectedValues={stageFilter}
+              onChange={setStageFilter}
+              placeholder="All stages"
+            />
+
+            {!onlyBatchId ? (
+              <MultiSelectFilter
+                label="Batch"
+                options={batchOptions}
+                selectedValues={batchFilter}
+                onChange={setBatchFilter}
+                placeholder="All batches"
+              />
+            ) : null}
+
+            <MultiSelectFilter
+              label="Payment"
+              options={paymentOptions}
+              selectedValues={paymentFilter}
+              onChange={setPaymentFilter}
+              placeholder="All payments"
+            />
+            {onlyBatchId ? renderColumnsMenu() : null}
+          </div>
+          <button
+            type="button"
+            className="students-clear-filters-btn"
+            onClick={() => {
+              setStageFilter([])
+              setBatchFilter([])
+              setPaymentFilter([])
+            }}
+          >
+            Clear Filters
+          </button>
+        </div>
+      </section>
+
+      <section
+        className={`panel ${onlyBatchId ? 'batch-students-panel' : 'students-table-panel'}`}
+      >
         {sortedStudents.length === 0 ? (
           <p className="empty-state">No students match your filters.</p>
         ) : (
-          <div className="admin-table">
-            <div className="admin-table-scroll">
-              <table
-                className="admin-table-el"
-                style={{ minWidth: `${tableMinWidth}px` }}
-              >
+          <>
+            <div className="admin-table">
+              <div className="admin-table-scroll">
+                <table
+                  className="admin-table-el"
+                  style={{ minWidth: `${tableMinWidth}px` }}
+                >
                 <thead className="admin-table-head">
                   <tr>
                     <th
@@ -1347,7 +1611,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedStudents.map((student) => (
+                  {paginatedStudents.map((student) => (
                     <tr
                       className={`admin-table-row ${
                         selectedStudentIds.includes(student.id) ? 'is-selected' : ''
@@ -1390,11 +1654,57 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
-          </div>
+            <div className="table-pagination">
+              <p className="table-pagination-summary">
+                Showing {pageStart + 1}-{pageEnd} of {totalRows}
+              </p>
+              <div className="table-pagination-controls">
+                <label className="table-page-size">
+                  Show
+                  <select
+                    value={pageSize}
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value))
+                      setCurrentPage(1)
+                    }}
+                  >
+                    {pageSizeOptions.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="table-page-btn"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  Prev
+                </button>
+                <span className="table-page-indicator">
+                  Page {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="table-page-btn"
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                  }
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </section>
+    </div>
       {isBulkOpen ? (
         <>
           <div className="drawer-overlay" onClick={() => !bulkSaving && setIsBulkOpen(false)} />

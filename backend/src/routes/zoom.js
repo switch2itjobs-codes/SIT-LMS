@@ -4,9 +4,11 @@ import { env } from '../config/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import {
+  createMeetingRegistrant,
   createMeeting,
   deleteMeeting,
   getMeeting,
+  listMeetingRegistrants,
   listZoomHosts,
   updateMeeting,
 } from '../zoom/zoomMeetingService.js'
@@ -58,6 +60,17 @@ async function getCurrentTrainerId(db, authUserId) {
   return data?.id ?? null
 }
 
+async function getTrainerEmailById(db, trainerId) {
+  if (!trainerId) return null
+  const { data, error } = await db
+    .from('trainers')
+    .select('email')
+    .eq('id', trainerId)
+    .maybeSingle()
+  if (error) throw error
+  return data?.email ? String(data.email).trim().toLowerCase() : null
+}
+
 async function ensureStudentEnrollment(db, authUserId, batchId) {
   const { data: student, error: studentError } = await db
     .from('students')
@@ -76,6 +89,70 @@ async function ensureStudentEnrollment(db, authUserId, batchId) {
     .maybeSingle()
   if (enrolledError) throw enrolledError
   return Boolean(enrolled)
+}
+
+async function getStudentProfile(db, authUserId) {
+  const { data: student, error } = await db
+    .from('students')
+    .select('id,student_name,email')
+    .eq('profile_id', authUserId)
+    .maybeSingle()
+  if (error) throw error
+  return student ?? null
+}
+
+async function ensureBatchStudentRegistrants({
+  db,
+  batchId,
+  zoomMeetingId,
+}) {
+  if (!batchId || !zoomMeetingId) return
+
+  const [{ registrants: approved = [] }, { registrants: pending = [] }] =
+    await Promise.all([
+      listMeetingRegistrants(String(zoomMeetingId), 'approved'),
+      listMeetingRegistrants(String(zoomMeetingId), 'pending'),
+    ])
+
+  const existingEmails = new Set(
+    [...approved, ...pending]
+      .map((item) => String(item.email ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  )
+
+  const { data: enrolledStudents, error: studentsError } = await db
+    .from('student_batches')
+    .select('students!inner(student_name,email)')
+    .eq('batch_id', batchId)
+    .eq('is_active', true)
+
+  if (studentsError) throw studentsError
+
+  const uniqueStudents = new Map()
+  for (const row of enrolledStudents ?? []) {
+    const student = row.students
+    const email = String(student?.email ?? '').trim().toLowerCase()
+    if (!email) continue
+    if (!uniqueStudents.has(email)) {
+      uniqueStudents.set(email, {
+        student_name: String(student?.student_name ?? 'Student'),
+        email,
+      })
+    }
+  }
+
+  for (const student of uniqueStudents.values()) {
+    if (existingEmails.has(student.email)) continue
+    const nameParts = student.student_name.trim().split(/\s+/)
+    const firstName = nameParts[0] || 'Student'
+    const lastName = nameParts.slice(1).join(' ') || 'Learner'
+    await createMeetingRegistrant(String(zoomMeetingId), {
+      email: student.email,
+      firstName,
+      lastName,
+    })
+    existingEmails.add(student.email)
+  }
 }
 
 async function resolveHostZoomUserId({
@@ -131,13 +208,11 @@ async function upsertParticipantAttendance(db, classSessionId, participants) {
   const attendanceRows = participants
     .filter((participant) => participant.user_email)
     .map((participant) => {
-      const durationMinutes = Number(participant.duration ?? 0)
-      const status =
-        durationMinutes >= 30
-          ? 'present'
-          : durationMinutes > 0
-            ? 'late'
-            : 'absent'
+      const durationSeconds = Number(participant.duration ?? 0)
+      // Persist only two statuses in `class_attendance`:
+      // - `present` if the participant attended for any time
+      // - `absent` otherwise
+      const status = durationSeconds > 0 ? 'present' : 'absent'
 
       return {
         class_session_id: classSessionId,
@@ -328,6 +403,12 @@ zoomRouter.post(
         savedRow = data
       }
 
+      await ensureBatchStudentRegistrants({
+        db,
+        batchId: savedRow.batch_id,
+        zoomMeetingId: savedRow.zoom_meeting_id,
+      })
+
       return res.status(201).json({
         meeting,
         classSession: savedRow,
@@ -346,7 +427,7 @@ zoomRouter.get('/meetings/:meetingId/start', async (req, res) => {
     const db = getRlsClient(req.auth.token)
     const { data: classSession, error: classSessionError } = await db
       .from('class_sessions')
-      .select('id,batch_id,trainer_id,zoom_meeting_id')
+      .select('id,batch_id,trainer_id,zoom_meeting_id,zoom_host_user_id')
       .eq('zoom_meeting_id', String(req.params.meetingId))
       .maybeSingle()
     if (classSessionError) throw classSessionError
@@ -387,14 +468,68 @@ zoomRouter.get('/meetings/:meetingId/join', async (req, res) => {
     }
 
     if (req.auth.role === 'student') {
-      const enrolled = await ensureStudentEnrollment(
-        db,
-        req.auth.user.id,
-        classSession.batch_id,
-      )
+      const student = await getStudentProfile(db, req.auth.user.id)
+      if (!student) {
+        return res.status(403).json({ error: 'Student profile not linked.' })
+      }
+
+      const enrolled = await ensureStudentEnrollment(db, req.auth.user.id, classSession.batch_id)
       if (!enrolled) {
         return res.status(403).json({ error: 'You are not enrolled in this class.' })
       }
+
+      if (!student.email) {
+        return res.status(400).json({
+          error: 'Student email is required to generate a unique join URL.',
+        })
+      }
+
+      const nameParts = String(student.student_name ?? 'Student').trim().split(/\s+/)
+      const firstName = nameParts[0] || 'Student'
+      const lastName = nameParts.slice(1).join(' ') || 'Learner'
+      const normalizedEmail = student.email.trim().toLowerCase()
+
+      let registrantJoinUrl = null
+      const approved = await listMeetingRegistrants(req.params.meetingId, 'approved')
+      const approvedRegistrant = (approved.registrants ?? []).find(
+        (item) => String(item.email ?? '').trim().toLowerCase() === normalizedEmail,
+      )
+
+      if (approvedRegistrant?.join_url) {
+        registrantJoinUrl = approvedRegistrant.join_url
+      } else {
+        try {
+          const created = await createMeetingRegistrant(req.params.meetingId, {
+            email: normalizedEmail,
+            firstName,
+            lastName,
+          })
+          registrantJoinUrl = created?.join_url ?? null
+        } catch (error) {
+          // If registrant already exists in another status, recover by searching pending list.
+          if (!String(error.message).includes('"code":300')) {
+            throw error
+          }
+          const pending = await listMeetingRegistrants(req.params.meetingId, 'pending')
+          const pendingRegistrant = (pending.registrants ?? []).find(
+            (item) => String(item.email ?? '').trim().toLowerCase() === normalizedEmail,
+          )
+          registrantJoinUrl = pendingRegistrant?.join_url ?? null
+        }
+      }
+
+      if (!registrantJoinUrl) {
+        return res.status(503).json({
+          error: 'Unable to generate student-specific join URL.',
+          details:
+            'This meeting may be legacy/non-registrant. Re-save or reschedule class to enable direct student join.',
+        })
+      }
+
+      return res.json({
+        join_url: registrantJoinUrl,
+        password: classSession.zoom_password,
+      })
     }
 
     return res.json({
@@ -463,7 +598,30 @@ zoomRouter.get('/meetings/:meetingId/report', async (req, res) => {
     }
 
     const participants = await getMeetingParticipants(req.params.meetingId)
-    const emails = participants
+    const trainerEmail = await getTrainerEmailById(db, classSession.trainer_id)
+    const hostZoomUserId = classSession.zoom_host_user_id
+      ? String(classSession.zoom_host_user_id).trim().toLowerCase()
+      : null
+    const filteredParticipants = participants.filter((participant) => {
+      const participantZoomUserId = String(
+        participant.id ?? participant.user_id ?? '',
+      )
+        .trim()
+        .toLowerCase()
+      if (
+        hostZoomUserId &&
+        participantZoomUserId &&
+        participantZoomUserId === hostZoomUserId
+      ) {
+        return false
+      }
+      if (!trainerEmail) return true
+      const participantEmail = String(participant.user_email ?? '')
+        .trim()
+        .toLowerCase()
+      return !participantEmail || participantEmail !== trainerEmail
+    })
+    const emails = filteredParticipants
       .map((participant) => participant.user_email?.toLowerCase())
       .filter(Boolean)
 
@@ -478,7 +636,7 @@ zoomRouter.get('/meetings/:meetingId/report', async (req, res) => {
       (studentRows ?? []).map((student) => [student.email.toLowerCase(), student]),
     )
 
-    const reportRows = participants.map((participant) => {
+    const reportRows = filteredParticipants.map((participant) => {
       const matched = participant.user_email
         ? byEmail.get(participant.user_email.toLowerCase())
         : null
@@ -489,11 +647,11 @@ zoomRouter.get('/meetings/:meetingId/report', async (req, res) => {
         student_name: matched?.student_name ?? null,
         join_time: participant.join_time,
         leave_time: participant.leave_time,
-        duration_seconds: Number(participant.duration ?? 0) * 60,
+        duration_seconds: Number(participant.duration ?? 0),
       }
     })
 
-    await upsertParticipantAttendance(db, classSession.id, participants)
+    await upsertParticipantAttendance(db, classSession.id, filteredParticipants)
 
     return res.json({ participants: reportRows })
   } catch (error) {

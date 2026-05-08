@@ -59,7 +59,7 @@ begin
   end if;
 
   if not exists (select 1 from pg_type where typname = 'attendance_status') then
-    create type public.attendance_status as enum ('present', 'absent', 'late', 'excused');
+    create type public.attendance_status as enum ('present', 'absent');
   end if;
 end $$;
 
@@ -104,6 +104,12 @@ create table if not exists public.students (
   experience_years numeric(4,1),
   enrollment_date date,
   resume_url text,
+  degree text,
+  previous_company text,
+  domain text,
+  linkedin_url text,
+  naukri_url text,
+  portfolio_url text,
   stage public.student_stage not null default 'training',
   comments text,
   attendance_pct numeric(5,2) check (attendance_pct between 0 and 100),
@@ -194,6 +200,78 @@ create table if not exists public.interviews (
   created_at timestamptz not null default now()
 );
 
+create or replace function public.sync_student_interview_count()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'INSERT' then
+    update public.students s
+    set no_of_interviews = (
+      select count(*)::int from public.interviews i where i.student_id = new.student_id
+    ),
+    updated_at = now()
+    where s.id = new.student_id;
+    return new;
+  elsif tg_op = 'DELETE' then
+    update public.students s
+    set no_of_interviews = (
+      select count(*)::int from public.interviews i where i.student_id = old.student_id
+    ),
+    updated_at = now()
+    where s.id = old.student_id;
+    return old;
+  else
+    if new.student_id is distinct from old.student_id then
+      update public.students s
+      set no_of_interviews = (
+        select count(*)::int from public.interviews i where i.student_id = old.student_id
+      ),
+      updated_at = now()
+      where s.id = old.student_id;
+
+      update public.students s
+      set no_of_interviews = (
+        select count(*)::int from public.interviews i where i.student_id = new.student_id
+      ),
+      updated_at = now()
+      where s.id = new.student_id;
+    else
+      update public.students s
+      set no_of_interviews = (
+        select count(*)::int from public.interviews i where i.student_id = new.student_id
+      ),
+      updated_at = now()
+      where s.id = new.student_id;
+    end if;
+    return new;
+  end if;
+end;
+$$;
+
+drop trigger if exists trg_sync_student_interview_count on public.interviews;
+create trigger trg_sync_student_interview_count
+after insert or update or delete on public.interviews
+for each row execute function public.sync_student_interview_count();
+
+create table if not exists public.mock_interviews (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.students(id) on delete cascade,
+  trainer_id uuid references public.trainers(id) on delete set null,
+  scheduled_at timestamptz not null,
+  status text not null default 'scheduled',
+  feedback_communication text,
+  feedback_confidence text,
+  feedback_technical text,
+  feedback_suggestions text,
+  overall_rating numeric(3,1),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint mock_interviews_status_check check (status in ('scheduled', 'completed', 'missed')),
+  constraint mock_interviews_overall_rating_check check (overall_rating is null or (overall_rating >= 0 and overall_rating <= 10))
+);
+
 create table if not exists public.placements (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references public.students(id) on delete cascade,
@@ -259,6 +337,7 @@ create table if not exists public.announcements (
   posted_by_profile_id uuid references public.profiles(id) on delete set null,
   title text not null,
   body text not null,
+  attachment_url text,
   is_important boolean not null default false,
   published_at timestamptz not null default now(),
   expires_at timestamptz
@@ -310,6 +389,40 @@ create table if not exists public.class_session_participants (
   constraint class_session_participants_unique unique (class_session_id, user_email, join_time)
 );
 
+-- =========================================================
+-- Batch Community Chat (Realtime)
+-- =========================================================
+create table if not exists public.batch_community_messages (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid not null references public.batches(id) on delete cascade,
+  sender_role public.app_role not null default 'student',
+  sender_name text not null,
+  message_text text,
+  attachment_url text,
+  attachment_name text,
+  attachment_size_bytes bigint,
+  created_at timestamptz not null default now(),
+  constraint batch_community_messages_payload_check check (
+    message_text is not null
+    or attachment_url is not null
+  )
+);
+
+-- Helps Supabase Realtime (Postgres changes) work reliably.
+alter table public.batch_community_messages replica identity full;
+
+-- Ensure Supabase Realtime will broadcast INSERT events for this table.
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    begin
+      execute 'alter publication supabase_realtime add table public.batch_community_messages';
+    exception
+      when duplicate_object then null;
+    end;
+  end if;
+end $$;
+
 create table if not exists public.zoom_webhook_events (
   id uuid primary key default gen_random_uuid(),
   event_name text not null,
@@ -342,6 +455,9 @@ create index if not exists idx_class_session_participants_session_id on public.c
 create index if not exists idx_class_session_participants_email on public.class_session_participants(user_email);
 create index if not exists idx_zoom_webhook_events_meeting_uuid on public.zoom_webhook_events(meeting_uuid);
 
+create index if not exists idx_batch_community_messages_batch_id_created_at
+  on public.batch_community_messages(batch_id, created_at);
+
 -- =========================================================
 -- RLS baseline (must customize with your final role rules)
 -- =========================================================
@@ -356,6 +472,7 @@ alter table public.interviews enable row level security;
 alter table public.placements enable row level security;
 alter table public.class_sessions enable row level security;
 alter table public.class_attendance enable row level security;
+alter table public.batch_community_messages enable row level security;
 alter table public.announcements enable row level security;
 alter table public.trainer_zoom_hosts enable row level security;
 alter table public.class_session_recordings enable row level security;

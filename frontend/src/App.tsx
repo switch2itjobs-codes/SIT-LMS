@@ -84,7 +84,7 @@ function App() {
           }
         />
         <Route
-          path="/home"
+          path="/home/*"
           element={
             session ? (
               <HomePage session={session} />

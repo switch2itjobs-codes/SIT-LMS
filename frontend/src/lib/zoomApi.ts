@@ -24,16 +24,34 @@ async function zoomRequest<T>(
   })
 
   if (!response.ok) {
-    const data = (await response.json().catch(() => null)) as
-      | { error?: string; details?: string }
-      | null
+    const contentType = response.headers.get('content-type') ?? ''
+    const data = contentType.includes('application/json')
+      ? ((await response.json().catch(() => null)) as
+          | { error?: string; details?: string }
+          | null)
+      : null
+    const textFallback = data
+      ? ''
+      : await response.text().catch(() => '')
     const message = data?.error ?? 'Zoom request failed.'
-    const details = data?.details ? ` (${data.details})` : ''
+    const details = data?.details
+      ? ` (${data.details})`
+      : textFallback
+        ? ` (${textFallback.slice(0, 120)})`
+        : ''
     throw new Error(`${message}${details}`)
   }
 
   if (response.status === 204) {
     return null as T
+  }
+
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) {
+    const raw = await response.text().catch(() => '')
+    throw new Error(
+      `Zoom API returned non-JSON response. Check VITE_ZOOM_API_BASE (${zoomApiBase}).${raw ? ` ${raw.slice(0, 120)}` : ''}`,
+    )
   }
 
   return (await response.json()) as T
