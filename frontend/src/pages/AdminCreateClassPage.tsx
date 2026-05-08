@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent } from 'react'
 import { Calendar, ChevronDown, ChevronUp, Clock, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -244,7 +245,7 @@ export function AdminCreateClassPage({
   }
 
   if (loading) {
-    return <section className="panel">Loading class scheduler...</section>
+    return <SpxLoader label="Loading class scheduler…" />
   }
 
   if (error && !batch) {

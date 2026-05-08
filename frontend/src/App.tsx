@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import './App.css'
+import { SpxLoader } from './components/SpxLoader'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
@@ -33,7 +34,7 @@ function App() {
   }, [])
 
   if (loading) {
-    return <div className="center-screen">Loading...</div>
+    return <SpxLoader />
   }
 
   const role =

@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent } from 'react'
 import {
-  CalendarDays,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
   Eye,
-  Filter,
   MoreVertical,
   Plus,
-  Search,
   Users,
   UserCheck,
   UserX,
@@ -99,6 +98,7 @@ type TrainerMetric = {
 const MAX_BATCH_CAPACITY = 3
 
 export function AdminTrainersPage() {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [trainers, setTrainers] = useState<TrainerRow[]>([])
@@ -111,16 +111,11 @@ export function AdminTrainersPage() {
   const [placements, setPlacements] = useState<PlacementRow[]>([])
   const [mockInterviews, setMockInterviews] = useState<MockInterviewRow[]>([])
 
-  const [searchText, setSearchText] = useState('')
+  const [searchText] = useState('')
   const [availabilityFilter, setAvailabilityFilter] = useState<'all' | Availability>('all')
   const [batchCountFilter, setBatchCountFilter] = useState<'all' | '0' | '1' | '2' | '3plus'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'idle'>('all')
   const [page, setPage] = useState(1)
-
-  const [selectedTrainerId, setSelectedTrainerId] = useState<string | null>(null)
-  const [drawerTab, setDrawerTab] = useState<
-    'overview' | 'batches' | 'performance' | 'classes' | 'interviews' | 'placements' | 'mock' | 'notes'
-  >('overview')
 
   const [showAddTrainer, setShowAddTrainer] = useState(false)
   const [addTrainerSaving, setAddTrainerSaving] = useState(false)
@@ -346,10 +341,6 @@ export function AdminTrainersPage() {
   const availableTrainers = trainerMetrics.filter((m) => m.availability === 'available').length
   const overloadedTrainers = trainerMetrics.filter((m) => m.availability === 'full').length
 
-  const selectedMetric = useMemo(
-    () => trainerMetrics.find((m) => m.trainer.id === selectedTrainerId) ?? null,
-    [selectedTrainerId, trainerMetrics],
-  )
 
   const addTrainer = async (event: FormEvent) => {
     event.preventDefault()
@@ -384,7 +375,7 @@ export function AdminTrainersPage() {
   }
 
   if (loading) {
-    return <div className="center-screen dashboard-loading">Loading trainer dashboard...</div>
+    return <SpxLoader label="Loading trainers…" />
   }
 
   return (
@@ -403,25 +394,25 @@ export function AdminTrainersPage() {
 
       <section className="trainer-stats-grid">
         <article className="placement-stat-card">
-          <span className="placement-stat-icon"><Users size={16} /></span>
+          <span className="placement-stat-icon is-blue"><Users size={16} /></span>
           <p>Total Trainers</p>
           <h3>{totalTrainers}</h3>
           <small>All registered</small>
         </article>
         <article className="placement-stat-card">
-          <span className="placement-stat-icon"><UserCheck size={16} /></span>
+          <span className="placement-stat-icon is-green"><UserCheck size={16} /></span>
           <p>Active Trainers</p>
           <h3>{activeTrainers}</h3>
           <small>Currently handling batches</small>
         </article>
         <article className="placement-stat-card">
-          <span className="placement-stat-icon"><CheckCircle2 size={16} /></span>
+          <span className="placement-stat-icon is-teal"><CheckCircle2 size={16} /></span>
           <p>Available Trainers</p>
           <h3>{availableTrainers}</h3>
           <small>Can take new batches</small>
         </article>
         <article className="placement-stat-card">
-          <span className="placement-stat-icon"><UserX size={16} /></span>
+          <span className="placement-stat-icon is-red"><UserX size={16} /></span>
           <p>Overloaded Trainers</p>
           <h3>{overloadedTrainers}</h3>
           <small>At maximum capacity</small>
@@ -429,14 +420,6 @@ export function AdminTrainersPage() {
       </section>
 
       <section className="trainer-filters-row">
-        <label className="placement-filter-input">
-          <Search size={14} />
-          <input
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Search trainer by name, email, phone..."
-          />
-        </label>
         <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as 'all' | Availability)}>
           <option value="all">Availability: All</option>
           <option value="available">Available</option>
@@ -455,9 +438,6 @@ export function AdminTrainersPage() {
           <option value="active">Active</option>
           <option value="idle">Idle</option>
         </select>
-        <button type="button" className="placement-filter-btn">
-          <Filter size={14} /> Filter
-        </button>
       </section>
 
       <section className="trainer-main-grid">
@@ -481,7 +461,7 @@ export function AdminTrainersPage() {
                   const availability = availabilityUi(metric.availability)
                   const extraBatchCount = metric.activeBatches.length - metric.batchTags.length
                   return (
-                    <tr key={metric.trainer.id} onClick={() => setSelectedTrainerId(metric.trainer.id)}>
+                    <tr key={metric.trainer.id} onClick={() => navigate(`/admin/users/trainers/${metric.trainer.id}`)}>
                       <td>
                         <div className="trainer-cell">
                           <div className="trainer-avatar">{metric.trainer.trainer_name[0]?.toUpperCase()}</div>
@@ -526,7 +506,10 @@ export function AdminTrainersPage() {
                         <div className="trainer-performance-cell">
                           <span>{metric.performanceScore}%</span>
                           <div className="trainer-performance-bar">
-                            <i style={{ width: `${metric.performanceScore}%` }} />
+                            <i style={{
+                              width: `${metric.performanceScore}%`,
+                              background: metric.performanceScore >= 70 ? 'linear-gradient(90deg, #16a34a, #22c55e)' : metric.performanceScore >= 40 ? 'linear-gradient(90deg, #f59e0b, #fbbf24)' : 'linear-gradient(90deg, #ef4444, #f87171)'
+                            }} />
                           </div>
                         </div>
                       </td>
@@ -537,7 +520,7 @@ export function AdminTrainersPage() {
                             className="placement-icon-btn"
                             onClick={(event) => {
                               event.stopPropagation()
-                              setSelectedTrainerId(metric.trainer.id)
+                              navigate(`/admin/users/trainers/${metric.trainer.id}`)
                             }}
                           >
                             <Eye size={14} />
@@ -590,108 +573,8 @@ export function AdminTrainersPage() {
             </div>
           </div>
         </article>
+
       </section>
-
-      {selectedMetric ? (
-        <aside className="placement-drawer-overlay" onClick={() => setSelectedTrainerId(null)}>
-          <div className="placement-drawer trainer-drawer" onClick={(event) => event.stopPropagation()}>
-            <div className="placement-drawer-head">
-              <h3>{selectedMetric.trainer.trainer_name}</h3>
-              <button type="button" onClick={() => setSelectedTrainerId(null)}><X size={16} /></button>
-            </div>
-
-            <nav className="trainer-drawer-tabs">
-              {['overview', 'batches', 'performance', 'classes', 'interviews', 'placements', 'mock', 'notes'].map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={drawerTab === tab ? 'active' : ''}
-                  onClick={() => setDrawerTab(tab as typeof drawerTab)}
-                >
-                  {tab}
-                </button>
-              ))}
-            </nav>
-
-            {drawerTab === 'overview' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Assignments Completion</p><h4>{selectedMetric.assignmentCompletionPct}%</h4></article>
-                <article className="trainer-mini-card"><p>Mock Interviews</p><h4>{selectedMetric.mockCompletedCount}</h4></article>
-                <article className="trainer-mini-card"><p>Interview Success</p><h4>{selectedMetric.interviewSuccessPct}%</h4></article>
-                <article className="trainer-mini-card"><p>Placements</p><h4>{selectedMetric.placementCount}</h4></article>
-              </div>
-            ) : null}
-
-            {drawerTab === 'batches' ? (
-              <div className="trainer-drawer-list">
-                {selectedMetric.allBatches.map((batch) => (
-                  <article key={batch.id}>
-                    <h5>{batch.batch_code}</h5>
-                    <p>{batch.status}</p>
-                    <small>{batch.start_date ? new Date(batch.start_date).toLocaleDateString('en-GB') : 'TBD'}</small>
-                  </article>
-                ))}
-                {!selectedMetric.allBatches.length ? <p className="muted-dark">No batches assigned.</p> : null}
-              </div>
-            ) : null}
-
-            {drawerTab === 'performance' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Performance Score</p><h4>{selectedMetric.performanceScore}%</h4></article>
-                <article className="trainer-mini-card"><p>Assignment Completion</p><h4>{selectedMetric.assignmentCompletionPct}%</h4></article>
-                <article className="trainer-mini-card"><p>Interview Success</p><h4>{selectedMetric.interviewSuccessPct}%</h4></article>
-                <article className="trainer-mini-card"><p>Placement Conversion</p><h4>{selectedMetric.placementPct}%</h4></article>
-              </div>
-            ) : null}
-
-            {drawerTab === 'classes' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Total Classes</p><h4>{selectedMetric.totalClasses}</h4></article>
-                <article className="trainer-mini-card"><p>Upcoming Classes</p><h4>{selectedMetric.upcomingClasses}</h4></article>
-                <article className="trainer-mini-card"><p>Missed Classes</p><h4>{selectedMetric.missedClasses}</h4></article>
-                <article className="trainer-mini-card"><p>Students</p><h4>{selectedMetric.studentCount}</h4></article>
-                <div className="trainer-upcoming-list">
-                  {selectedMetric.upcomingClassRows.map((row) => (
-                    <p key={row.id}>
-                      <CalendarDays size={13} />
-                      {new Date(row.starts_at).toLocaleString('en-GB')}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {drawerTab === 'interviews' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Interview Success Rate</p><h4>{selectedMetric.interviewSuccessPct}%</h4></article>
-              </div>
-            ) : null}
-
-            {drawerTab === 'placements' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Total Placements</p><h4>{selectedMetric.placementCount}</h4></article>
-                <article className="trainer-mini-card"><p>Placement Conversion</p><h4>{selectedMetric.placementPct}%</h4></article>
-              </div>
-            ) : null}
-
-            {drawerTab === 'mock' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card"><p>Mock Completion</p><h4>{selectedMetric.mockCompletionPct}%</h4></article>
-                <article className="trainer-mini-card"><p>Mock Completed</p><h4>{selectedMetric.mockCompletedCount}</h4></article>
-              </div>
-            ) : null}
-
-            {drawerTab === 'notes' ? (
-              <div className="trainer-drawer-grid">
-                <article className="trainer-mini-card">
-                  <p>Comments</p>
-                  <h4>{selectedMetric.trainer.comments ?? 'No notes yet.'}</h4>
-                </article>
-              </div>
-            ) : null}
-          </div>
-        </aside>
-      ) : null}
 
       {showAddTrainer ? (
         <aside className="placement-drawer-overlay" onClick={() => setShowAddTrainer(false)}>

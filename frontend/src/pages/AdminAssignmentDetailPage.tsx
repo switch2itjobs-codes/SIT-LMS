@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Clock3,
   Download,
   Edit3,
   FileText,
-  Filter,
-  Link2,
-  Medal,
   MoreVertical,
-  Paperclip,
   Search,
   Star,
   Trophy,
@@ -94,6 +90,7 @@ export function AdminAssignmentDetailPage({
   batchId,
   onBack,
 }: AdminAssignmentDetailPageProps) {
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -102,7 +99,6 @@ export function AdminAssignmentDetailPage({
   const [trainerName, setTrainerName] = useState('')
   const [totalStudents, setTotalStudents] = useState(0)
   const [submissions, setSubmissions] = useState<SubmissionView[]>([])
-  const [overviewOpen, setOverviewOpen] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('latest')
@@ -378,7 +374,7 @@ export function AdminAssignmentDetailPage({
   }
 
   if (loading) {
-    return <section className="panel">Loading assignment details...</section>
+    return <SpxLoader label="Loading assignment…" />
   }
 
   if (!assignment) {
@@ -424,51 +420,6 @@ export function AdminAssignmentDetailPage({
           </p>
         </div>
       </header>
-
-      <article className="assignment-overview-card">
-        <button
-          type="button"
-          className="assignment-overview-toggle"
-          onClick={() => setOverviewOpen((prev) => !prev)}
-        >
-          <span>Assignment Overview</span>
-          {overviewOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-        {overviewOpen ? (
-          <div className="assignment-overview-grid">
-            <article>
-              <h4>
-                <FileText size={13} /> Description
-              </h4>
-              <p>{assignment.description || 'No description provided.'}</p>
-            </article>
-            <article>
-              <h4>
-                <Link2 size={13} /> Submission Type
-              </h4>
-              <p>{assignment.submission_type || 'both'}</p>
-            </article>
-            <article>
-              <h4>
-                <Medal size={13} /> Max Marks
-              </h4>
-              <p>{assignment.max_marks ?? 10}</p>
-            </article>
-            <article>
-              <h4>
-                <Paperclip size={13} /> Attachments
-              </h4>
-              {assignment.attachment_url ? (
-                <a href={assignment.attachment_url} target="_blank" rel="noreferrer">
-                  <Paperclip size={13} /> Assignment_Brief.pdf
-                </a>
-              ) : (
-                <p>—</p>
-              )}
-            </article>
-          </div>
-        ) : null}
-      </article>
 
       <section className="assignment-kpi-grid">
         <article className="assignment-kpi-card">
@@ -564,9 +515,6 @@ export function AdminAssignmentDetailPage({
           <option value="oldest">Oldest</option>
           <option value="marks_desc">Marks High → Low</option>
         </select>
-        <button type="button" className="batch-link-btn">
-          <Filter size={13} /> Filters
-        </button>
       </section>
 
       <section className="panel assignment-submissions-panel">
@@ -592,7 +540,12 @@ export function AdminAssignmentDetailPage({
                         {row.student_name.slice(0, 1).toUpperCase()}
                       </span>
                       <div>
-                        <strong>{row.student_name}</strong>
+                        <strong
+                          className="assignment-student-link"
+                          onClick={() => navigate(`/admin/students/${row.student_id}`)}
+                        >
+                          {row.student_name}
+                        </strong>
                         <p>{row.student_email ?? `${row.student_name.toLowerCase().replace(/\s+/g, '')}@example.com`}</p>
                       </div>
                     </div>

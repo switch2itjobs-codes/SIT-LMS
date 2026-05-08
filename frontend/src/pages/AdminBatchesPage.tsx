@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent } from 'react'
 import { Plus, Search, Star, User, Users } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -355,11 +356,7 @@ export function AdminBatchesPage({ onOpenBatch }: AdminBatchesPageProps) {
   }
 
   if (loading) {
-    return (
-      <section className="panel">
-        <p className="muted-dark">Loading batches...</p>
-      </section>
-    )
+    return <SpxLoader label="Loading batches…" />
   }
 
   if (error) {

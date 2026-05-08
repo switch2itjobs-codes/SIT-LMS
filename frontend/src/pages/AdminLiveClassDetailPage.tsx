@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import {
   ArrowLeft,
   CalendarDays,
@@ -393,7 +394,7 @@ export function AdminLiveClassDetailPage({
   }, [batchId, classSessionId])
 
   if (loading) {
-    return <p className="muted-dark">Loading class details...</p>
+    return <SpxLoader inline label="Loading class details…" />
   }
 
   if (error || !session) {

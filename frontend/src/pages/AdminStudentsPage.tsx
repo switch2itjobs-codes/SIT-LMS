@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import { useNavigate } from 'react-router-dom'
 import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import {
@@ -17,7 +18,6 @@ import {
   Trophy,
   UserPlus,
   Users,
-  Wallet,
   X,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -496,8 +496,6 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
     const isAtRisk = (student: StudentRow) =>
       (typeof student.attendance_pct === 'number' && student.attendance_pct < 75) ||
       (typeof student.progress_pct === 'number' && student.progress_pct < 50)
-    const hasPendingPayment = (student: StudentRow) =>
-      student.payment_status !== 'paid' || student.pending_amount > 0
     const isPlaced = (student: StudentRow) => student.stage === 'placed'
 
     return [
@@ -532,14 +530,6 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
         growth: growthFor(isAtRisk),
         icon: <BadgeAlert size={20} />,
         tone: 'orange',
-      },
-      {
-        id: 'pending-payments',
-        label: 'Pending Payments',
-        value: students.filter(hasPendingPayment).length,
-        growth: growthFor(hasPendingPayment),
-        icon: <Wallet size={20} />,
-        tone: 'yellow',
       },
       {
         id: 'placed',
@@ -1227,11 +1217,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
   }
 
   if (loading) {
-    return (
-      <section className={`panel ${onlyBatchId ? 'batch-students-panel' : ''}`}>
-        <p className="muted-dark">Loading students...</p>
-      </section>
-    )
+    return <SpxLoader label="Loading students…" />
   }
 
   if (error) {
@@ -1518,7 +1504,7 @@ export function AdminStudentsPage({ onlyBatchId }: AdminStudentsPageProps = {}) 
               onChange={setPaymentFilter}
               placeholder="All payments"
             />
-            {onlyBatchId ? renderColumnsMenu() : null}
+            {renderColumnsMenu()}
           </div>
           <button
             type="button"

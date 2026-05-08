@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
+import { useNavigate } from 'react-router-dom'
 import {
   Activity,
   ArrowLeft,
+  Award,
   Calendar,
+  CheckCircle,
   CreditCard,
+  Eye,
   ExternalLink,
   FileText,
-  FolderOpen,
   GraduationCap,
   Layers,
   Link2,
@@ -14,13 +18,17 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
-  Percent,
   Phone,
-  Star,
-  Target,
+  Send,
+  Search,
   TrendingUp,
+  Upload,
   User,
+  UserMinus,
   Users,
+  Video,
+  X,
+  Zap,
 } from 'lucide-react'
 import { getBackendOrigin } from '../lib/backendOrigin'
 import { supabase } from '../lib/supabase'
@@ -56,6 +64,7 @@ type StudentRecord = {
   last_activity_at: string | null
   course_fee: number
   amount_paid: number
+  avatar_url: string | null
 }
 
 type BatchRow = { id: string; batch_code: string; trainer_id: string | null }
@@ -85,54 +94,96 @@ type ActivityRow = {
   created_at: string
 }
 
-type TabKey =
-  | 'personal'
-  | 'timeline'
-  | 'payments'
-  | 'interviews'
-  | 'documents'
-  | 'feedback'
+type PlacementRow = {
+  id: string
+  company_name: string
+  job_role: string | null
+  salary_package: number | null
+  placement_date: string | null
+  notes: string | null
+  created_at: string
+}
 
-const TABS: { key: TabKey; label: string; icon: typeof User }[] = [
-  { key: 'personal', label: 'Personal Details', icon: User },
-  { key: 'timeline', label: 'Activity Timeline', icon: Activity },
-  { key: 'payments', label: 'Payments', icon: CreditCard },
-  { key: 'interviews', label: 'Interviews', icon: Users },
-  { key: 'documents', label: 'Documents', icon: FolderOpen },
-  { key: 'feedback', label: 'Feedback', icon: MessageSquare },
-]
+type MockInterviewRow = {
+  id: string
+  trainer_id: string | null
+  scheduled_at: string | null
+  status: string
+  overall_rating: number | null
+  notes: string | null
+  created_at: string
+}
+
+type ClassAttendanceRaw = {
+  id: string
+  class_session_id: string
+  status: string
+  marked_at: string | null
+  class_sessions: Array<{
+    id: string
+    title: string | null
+    starts_at: string | null
+    batch_id: string | null
+  }>
+}
+
+type ClassAttendanceRow = {
+  id: string
+  class_session_id: string
+  status: string
+  marked_at: string | null
+  class_sessions: {
+    id: string
+    title: string | null
+    starts_at: string | null
+    batch_id: string | null
+  } | null
+}
+
+type StudentBatchHistoryRaw = {
+  id: string
+  batch_id: string
+  joined_at: string | null
+  is_active: boolean
+  left_at: string | null
+  dropout_reason: string | null
+  created_at: string
+  batches: Array<{ id: string; batch_code: string }>
+}
+
+type StudentBatchHistoryRow = {
+  id: string
+  batch_id: string
+  joined_at: string | null
+  is_active: boolean
+  left_at: string | null
+  dropout_reason: string | null
+  created_at: string
+  batches: { id: string; batch_code: string } | null
+}
+
+type TimelineCategory =
+  | 'activity'
+  | 'payment'
+  | 'interview'
+  | 'placement'
+  | 'mock_interview'
+  | 'class_attendance'
+  | 'batch_enrollment'
+  | 'stage_change'
+
+type TabKey = 'personal' | 'timeline'
 
 function displayDash(v: string | null | undefined): string {
   if (v == null || String(v).trim() === '') return '—'
   return String(v)
 }
 
-type EmptyKind = 'available' | 'assigned' | 'trainer'
-
-function emptyMessage(kind: EmptyKind): string {
-  if (kind === 'trainer') return 'No Trainer Assigned'
-  if (kind === 'assigned') return 'Not Assigned'
-  return 'Not Available'
-}
-
 function isFilled(v: string | null | undefined): boolean {
   return v != null && String(v).trim() !== ''
 }
 
-function formatJoined(d: string | null | undefined): string {
-  if (!d) return ''
-  try {
-    return new Intl.DateTimeFormat('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    }).format(new Date(d))
-  } catch {
-    return d
-  }
-}
-
-function formatShortDate(d: string | null): string {
+function formatDate(d: string | null | undefined): string {
   if (!d) return '—'
   try {
     return new Intl.DateTimeFormat('en-IN', {
@@ -159,11 +210,6 @@ function studentInitials(name: string): string {
   return `${parts[0]![0] ?? ''}${parts[1]![0] ?? ''}`.toUpperCase()
 }
 
-function trainerRatingFilledStars(rating: number | null | undefined): number {
-  if (rating == null || Number.isNaN(rating)) return 0
-  return Math.min(3, Math.max(0, Math.round(Number(rating))))
-}
-
 function isActiveStudent(lastActivity: string | null): boolean {
   if (!lastActivity) return true
   const t = new Date(lastActivity).getTime()
@@ -171,12 +217,118 @@ function isActiveStudent(lastActivity: string | null): boolean {
   return Date.now() - t < 14 * 24 * 60 * 60 * 1000
 }
 
-type TimelineItem = {
-  id: string
-  sort: number
-  title: string
-  sub: string
-  dateLabel: string
+function FieldBlock({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div>
+      <div className="spx-field-lbl">{label}</div>
+      <div className="spx-field-val">{isFilled(value) ? value! : '—'}</div>
+    </div>
+  )
+}
+
+type FieldEditableProps = {
+  label: string
+  value?: string | null
+  editing: boolean
+  onChange?: (v: string) => void
+  type?: 'text' | 'number' | 'email' | 'tel' | 'date' | 'url'
+  options?: { value: string; label: string }[]
+  placeholder?: string
+}
+
+function FieldEditable({
+  label,
+  value,
+  editing,
+  onChange,
+  type = 'text',
+  options,
+  placeholder,
+}: FieldEditableProps) {
+  return (
+    <div>
+      <div className="spx-field-lbl">{label}</div>
+      {editing ? (
+        options ? (
+          <select
+            className="spx-inline-input"
+            value={value ?? ''}
+            onChange={(e) => onChange?.(e.target.value)}
+          >
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            className="spx-inline-input"
+            type={type}
+            value={value ?? ''}
+            placeholder={placeholder}
+            onChange={(e) => onChange?.(e.target.value)}
+          />
+        )
+      ) : (
+        <div className="spx-field-val">{isFilled(value) ? value! : '—'}</div>
+      )}
+    </div>
+  )
+}
+
+function ProgressBar({ pct, color = '#2563EB' }: { pct: number; color?: string }) {
+  return (
+    <div className="spx-prog">
+      <div className="spx-prog-fill" style={{ width: `${pct}%`, background: color }} />
+    </div>
+  )
+}
+
+function CircleProgress({ pct, size = 56, stroke = 5 }: { pct: number; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2
+  const circ = 2 * Math.PI * r
+  const offset = circ * (1 - pct / 100)
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E8E6E1" strokeWidth={stroke} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="#2563EB"
+        strokeWidth={stroke}
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      <text
+        x="50%"
+        y="50%"
+        dominantBaseline="middle"
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="600"
+        fill="#1D4ED8"
+      >
+        {pct}%
+      </text>
+    </svg>
+  )
+}
+
+function StarRating({ filled, total = 3 }: { filled: number; total?: number }) {
+  return (
+    <span className="spx-stars">
+      {Array.from({ length: total }).map((_, i) => (
+        <span key={i} className={i < filled ? 'spx-star-filled' : 'spx-star-empty'}>
+          ★
+        </span>
+      ))}
+    </span>
+  )
 }
 
 export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetailPageProps) {
@@ -188,13 +340,58 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
     trainer_name: string | null
     joined_at: string | null
   } | null>(null)
+  const navigate = useNavigate()
   const [payments, setPayments] = useState<PaymentRow[]>([])
   const [interviews, setInterviews] = useState<InterviewRow[]>([])
   const [activities, setActivities] = useState<ActivityRow[]>([])
+  const [placements, setPlacements] = useState<PlacementRow[]>([])
+  const [mockInterviews, setMockInterviews] = useState<MockInterviewRow[]>([])
+  const [classAttendance, setClassAttendance] = useState<ClassAttendanceRow[]>([])
+  const [batchHistory, setBatchHistory] = useState<StudentBatchHistoryRow[]>([])
   const [tab, setTab] = useState<TabKey>('personal')
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [paySubmitting, setPaySubmitting] = useState(false)
+  const [payError, setPayError] = useState('')
+  const [payForm, setPayForm] = useState({
+    amount: '',
+    paid_on: new Date().toISOString().slice(0, 10),
+    payment_mode: 'upi' as string,
+    notes: '',
+  })
+  // Add to Batch modal
+  const [batchModalOpen, setBatchModalOpen] = useState(false)
+  const [allBatches, setAllBatches] = useState<{ id: string; batch_code: string; status: string }[]>([])
+  const [batchSearch, setBatchSearch] = useState('')
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set())
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
+  const [batchError, setBatchError] = useState('')
+
+  // Remove from Batch modal
+  const [removeBatchModalOpen, setRemoveBatchModalOpen] = useState(false)
+  const [activeBatches, setActiveBatches] = useState<{ id: string; batch_id: string; batch_code: string }[]>([])
+  const [removeBatchSubmitting, setRemoveBatchSubmitting] = useState(false)
+  const [removeBatchError, setRemoveBatchError] = useState('')
+
+  // Update Stage modal
+  const [stageModalOpen, setStageModalOpen] = useState(false)
+  const [stageForm, setStageForm] = useState({ stage: '', notes: '' })
+  const [stageSubmitting, setStageSubmitting] = useState(false)
+  const [stageError, setStageError] = useState('')
+
+  // Feedback modal
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false)
+  const [feedbackForm, setFeedbackForm] = useState({ rating: 0, hoverRating: 0, notes: '' })
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
+  const [feedbackError, setFeedbackError] = useState('')
+  const [latestFeedback, setLatestFeedback] = useState<{
+    notes: string; rating: number; given_by: string; date: string
+  } | null>(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement | null>(null)
+
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement | null>(null)
-  const [editOpen, setEditOpen] = useState(false)
+  const [editMode, setEditMode] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pendingResumeFile, setPendingResumeFile] = useState<File | null>(null)
   const [editForm, setEditForm] = useState({
@@ -215,6 +412,7 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
     naukri_url: '',
     portfolio_url: '',
     comments: '',
+    course_fee: '' as string,
   })
 
   const load = useCallback(async () => {
@@ -224,7 +422,7 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
     const { data: st, error: stErr } = await supabase
       .from('students')
       .select(
-        'id,student_name,email,phone,gender,location,degree,previous_company,previous_job_role,experience_years,domain,enrollment_date,resume_url,linkedin_url,naukri_url,portfolio_url,stage,payment_status,attendance_pct,progress_pct,trainer_rating,comments,last_activity_at,course_fee,amount_paid',
+        'id,student_name,email,phone,gender,location,degree,previous_company,previous_job_role,experience_years,domain,enrollment_date,resume_url,linkedin_url,naukri_url,portfolio_url,stage,payment_status,attendance_pct,progress_pct,trainer_rating,comments,last_activity_at,course_fee,amount_paid,avatar_url',
       )
       .eq('id', studentId)
       .maybeSingle()
@@ -238,8 +436,16 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
 
     setStudent(st as StudentRecord)
 
-    const [{ data: sbRows, error: sbErr }, { data: payRows }, { data: intRows }, { data: actRows }] =
-      await Promise.all([
+    const [
+      { data: sbRows, error: sbErr },
+      { data: payRows },
+      { data: intRows },
+      { data: actRows },
+      { data: placementRows },
+      { data: mockRows },
+      { data: attendanceRows },
+      { data: batchHistRows },
+    ] = await Promise.all([
         supabase
           .from('student_batches')
           .select('batch_id,joined_at')
@@ -261,15 +467,68 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
           .eq('student_id', studentId)
           .order('created_at', { ascending: false })
           .limit(80),
+        supabase
+          .from('placements')
+          .select('id,company_name,job_role,salary_package,placement_date,notes,created_at')
+          .eq('student_id', studentId)
+          .order('placement_date', { ascending: false }),
+        supabase
+          .from('mock_interviews')
+          .select('id,trainer_id,scheduled_at,status,overall_rating,notes,created_at')
+          .eq('student_id', studentId)
+          .order('scheduled_at', { ascending: false }),
+        supabase
+          .from('class_attendance')
+          .select('id,class_session_id,status,marked_at,class_sessions(id,title,starts_at,batch_id)')
+          .eq('student_id', studentId)
+          .order('marked_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('student_batches')
+          .select('id,batch_id,joined_at,is_active,left_at,dropout_reason,created_at,batches(id,batch_code)')
+          .eq('student_id', studentId)
+          .order('created_at', { ascending: false }),
       ])
 
-    if (sbErr) {
-      setError(sbErr.message)
-    }
+    if (sbErr) setError(sbErr.message)
 
     setPayments((payRows ?? []) as PaymentRow[])
     setInterviews((intRows ?? []) as InterviewRow[])
     setActivities((actRows ?? []) as ActivityRow[])
+    setPlacements((placementRows ?? []) as PlacementRow[])
+    setMockInterviews((mockRows ?? []) as MockInterviewRow[])
+    setClassAttendance(
+      ((attendanceRows ?? []) as ClassAttendanceRaw[]).map((r) => ({
+        ...r,
+        class_sessions: Array.isArray(r.class_sessions) ? r.class_sessions[0] ?? null : r.class_sessions ?? null,
+      })),
+    )
+    setBatchHistory(
+      ((batchHistRows ?? []) as StudentBatchHistoryRaw[]).map((r) => ({
+        ...r,
+        batches: Array.isArray(r.batches) ? r.batches[0] ?? null : r.batches ?? null,
+      })),
+    )
+
+    // Fetch latest feedback
+    const { data: fbRow } = await supabase
+      .from('progress_activities')
+      .select('notes,progress_score,completion_feedback,activity_date')
+      .eq('student_id', studentId)
+      .eq('activity_type', 'feedback')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (fbRow) {
+      setLatestFeedback({
+        notes: fbRow.notes ?? '',
+        rating: Math.round((fbRow.progress_score ?? 0) / 20),
+        given_by: fbRow.completion_feedback ?? 'Admin',
+        date: fbRow.activity_date ?? '',
+      })
+    } else {
+      setLatestFeedback(null)
+    }
 
     const links = sbRows ?? []
     if (links.length === 0) {
@@ -339,8 +598,7 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
       degree: student.degree ?? '',
       previous_company: student.previous_company ?? '',
       previous_job_role: student.previous_job_role ?? '',
-      experience_years:
-        student.experience_years != null ? String(student.experience_years) : '',
+      experience_years: student.experience_years != null ? String(student.experience_years) : '',
       domain: student.domain ?? '',
       stage: student.stage,
       payment_status: student.payment_status,
@@ -349,9 +607,14 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
       naukri_url: student.naukri_url ?? '',
       portfolio_url: student.portfolio_url ?? '',
       comments: student.comments ?? '',
+      course_fee: student.course_fee != null ? String(student.course_fee) : '',
     })
-    setEditOpen(true)
+    setEditMode(true)
     setMoreOpen(false)
+  }
+  const cancelEdit = () => {
+    setEditMode(false)
+    setPendingResumeFile(null)
   }
 
   const saveEdit = async () => {
@@ -374,30 +637,11 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
         const fd = new FormData()
         fd.append('file', pendingResumeFile)
         const uploadUrl = `${origin}/api/admin/students/${student.id}/resume`
-        const upAc = new AbortController()
-        const upTo = window.setTimeout(() => upAc.abort(), 120_000)
-        let upRes: Response
-        try {
-          upRes = await fetch(uploadUrl, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${session.access_token}` },
-            body: fd,
-            signal: upAc.signal,
-          })
-        } catch (netErr) {
-          const msg =
-            netErr instanceof DOMException && netErr.name === 'AbortError'
-              ? 'Resume upload timed out. Check that the backend is running and reachable.'
-              : netErr instanceof Error
-                ? netErr.message
-                : 'Could not reach the server to upload the resume.'
-          setError(
-            `${msg} Expected API at ${uploadUrl}. If the app is not on the same machine, set VITE_BACKEND_URL or VITE_ZOOM_API_BASE in the frontend env.`,
-          )
-          return
-        } finally {
-          window.clearTimeout(upTo)
-        }
+        const upRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          body: fd,
+        })
         const upBody = (await upRes.json().catch(() => ({}))) as {
           error?: string
           resume_url?: string
@@ -413,9 +657,8 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
         resumeUrl = upBody.resume_url
       }
 
-      const exp = editForm.experience_years.trim()
-        ? Number.parseFloat(editForm.experience_years)
-        : null
+      const exp = editForm.experience_years.trim() ? Number.parseFloat(editForm.experience_years) : null
+      const fee = editForm.course_fee.trim() ? Number.parseFloat(editForm.course_fee) : null
 
       const patchBody = {
         student_name: editForm.student_name.trim(),
@@ -435,41 +678,26 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
         naukri_url: editForm.naukri_url.trim() || null,
         portfolio_url: editForm.portfolio_url.trim() || null,
         comments: editForm.comments.trim() || null,
+        course_fee: fee != null && !Number.isNaN(fee) ? fee : null,
       }
 
       const patchUrl = `${origin}/api/admin/students/${student.id}`
-      const ac = new AbortController()
-      const to = window.setTimeout(() => ac.abort(), 120_000)
-      try {
-        const res = await fetch(patchUrl, {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(patchBody),
-          signal: ac.signal,
-        })
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        if (!res.ok) {
-          setError(body.error ?? `Save failed (${res.status}).`)
-          return
-        }
-      } catch (netErr) {
-        const msg =
-          netErr instanceof DOMException && netErr.name === 'AbortError'
-            ? 'Save timed out. Check that the backend is running (same URL as resume upload).'
-            : netErr instanceof Error
-              ? netErr.message
-              : 'Could not reach the server to save.'
-        setError(`${msg} Expected API at ${patchUrl}.`)
+      const res = await fetch(patchUrl, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(patchBody),
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        setError(body.error ?? `Save failed (${res.status}).`)
         return
-      } finally {
-        window.clearTimeout(to)
       }
 
       setPendingResumeFile(null)
-      setEditOpen(false)
+      setEditMode(false)
       void load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed unexpectedly.')
@@ -487,772 +715,1514 @@ export function AdminStudentDetailPage({ studentId, onBack }: AdminStudentDetail
     setMoreOpen(false)
   }
 
-  const timelineItems = useMemo((): TimelineItem[] => {
-    const out: TimelineItem[] = []
+  const openPayModal = () => {
+    setPayForm({
+      amount: '',
+      paid_on: new Date().toISOString().slice(0, 10),
+      payment_mode: 'upi',
+      notes: '',
+    })
+    setPayError('')
+    setPayModalOpen(true)
+  }
+
+  const submitPayment = async () => {
+    if (!student) return
+    const amt = Number.parseFloat(payForm.amount)
+    if (!amt || Number.isNaN(amt) || amt <= 0) {
+      setPayError('Enter a valid amount greater than 0.')
+      return
+    }
+    const currentPending = Math.max(0, Number(student.course_fee ?? 0) - Number(student.amount_paid ?? 0))
+    if (amt > currentPending && currentPending > 0) {
+      setPayError(`Amount (₹${amt.toLocaleString('en-IN')}) exceeds pending amount (₹${currentPending.toLocaleString('en-IN')}).`)
+      return
+    }
+    if (!payForm.paid_on) {
+      setPayError('Please select a payment date.')
+      return
+    }
+    setPayError('')
+    setPaySubmitting(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        setPayError('Not authenticated.')
+        return
+      }
+      const res = await fetch(`${getBackendOrigin()}/api/admin/students/${student.id}/payments`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: amt,
+          paid_on: payForm.paid_on,
+          payment_mode: payForm.payment_mode,
+          notes: payForm.notes.trim() || null,
+        }),
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        setPayError(body.error ?? `Payment failed (${res.status}).`)
+        return
+      }
+      setPayModalOpen(false)
+      void load()
+    } catch (e) {
+      setPayError(e instanceof Error ? e.message : 'Payment failed.')
+    } finally {
+      setPaySubmitting(false)
+    }
+  }
+
+  // ── Add to Batch ──
+  const openBatchModal = async () => {
+    setBatchError('')
+    setSelectedBatchIds(new Set())
+    setBatchSearch('')
+    setBatchModalOpen(true)
+    const { data } = await supabase
+      .from('batches')
+      .select('id,batch_code,status')
+      .in('status', ['active', 'planned'])
+      .order('batch_code')
+    setAllBatches((data ?? []) as { id: string; batch_code: string; status: string }[])
+  }
+
+  const toggleBatchSelection = (id: string) => {
+    setSelectedBatchIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const submitAddBatch = async () => {
+    if (selectedBatchIds.size === 0) { setBatchError('Select at least one batch.'); return }
+    setBatchSubmitting(true)
+    setBatchError('')
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const rows = [...selectedBatchIds].map((bid) => ({
+        student_id: studentId,
+        batch_id: bid,
+        joined_at: today,
+        is_active: true,
+      }))
+      const { error } = await supabase.from('student_batches').upsert(rows, { onConflict: 'student_id,batch_id' })
+      if (error) { setBatchError(error.message); return }
+      setBatchModalOpen(false)
+      void load()
+    } catch (e) {
+      setBatchError(e instanceof Error ? e.message : 'Failed to add.')
+    } finally {
+      setBatchSubmitting(false)
+    }
+  }
+
+  const filteredBatches = useMemo(() => {
+    const q = batchSearch.toLowerCase().trim()
+    if (!q) return allBatches
+    return allBatches.filter((b) => b.batch_code.toLowerCase().includes(q))
+  }, [allBatches, batchSearch])
+
+  // ── Remove from Batch ──
+  const openRemoveBatchModal = async () => {
+    setRemoveBatchError('')
+    setRemoveBatchModalOpen(true)
+    const { data } = await supabase
+      .from('student_batches')
+      .select('id,batch_id,batches(batch_code)')
+      .eq('student_id', studentId)
+      .eq('is_active', true)
+    const rows = ((data ?? []) as Array<{ id: string; batch_id: string; batches: Array<{ batch_code: string }> | { batch_code: string } | null }>).map((r) => ({
+      id: r.id,
+      batch_id: r.batch_id,
+      batch_code: Array.isArray(r.batches) ? r.batches[0]?.batch_code ?? '—' : r.batches?.batch_code ?? '—',
+    }))
+    setActiveBatches(rows)
+  }
+
+  const removeBatch = async (sbId: string) => {
+    setRemoveBatchSubmitting(true)
+    setRemoveBatchError('')
+    try {
+      const { error } = await supabase
+        .from('student_batches')
+        .update({ is_active: false, left_at: new Date().toISOString().slice(0, 10) })
+        .eq('id', sbId)
+      if (error) { setRemoveBatchError(error.message); return }
+      setActiveBatches((prev) => prev.filter((b) => b.id !== sbId))
+      if (activeBatches.length <= 1) {
+        setRemoveBatchModalOpen(false)
+      }
+      void load()
+    } catch (e) {
+      setRemoveBatchError(e instanceof Error ? e.message : 'Failed.')
+    } finally {
+      setRemoveBatchSubmitting(false)
+    }
+  }
+
+  // ── Update Stage ──
+  const stageOptions = [
+    { value: 'training', label: 'Training' },
+    { value: 'trial_classes', label: 'Trial Classes' },
+    { value: 'mock_interviews', label: 'Mock Interviews' },
+    { value: 'searching_for_jobs', label: 'Searching for Jobs' },
+    { value: 'taking_interviews', label: 'Taking Interviews' },
+    { value: 'placed', label: 'Placed' },
+    { value: 'inactive', label: 'Inactive' },
+  ]
+
+  const openStageModal = () => {
+    if (!student) return
+    setStageForm({ stage: student.stage, notes: '' })
+    setStageError('')
+    setStageModalOpen(true)
+  }
+
+  const submitStageUpdate = async () => {
+    if (!student || !stageForm.stage) { setStageError('Select a stage.'); return }
+    if (stageForm.stage === student.stage) { setStageError('Stage is already set to this value.'); return }
+    setStageSubmitting(true)
+    setStageError('')
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ stage: stageForm.stage, updated_at: new Date().toISOString() })
+        .eq('id', studentId)
+      if (error) { setStageError(error.message); return }
+      // Log as progress activity
+      await supabase.from('progress_activities').insert({
+        student_id: studentId,
+        activity_type: 'stage_change',
+        status: 'completed',
+        activity_date: new Date().toISOString().slice(0, 10),
+        notes: `Stage updated to ${stageForm.stage}${stageForm.notes.trim() ? ` — ${stageForm.notes.trim()}` : ''}`,
+      })
+      setStageModalOpen(false)
+      void load()
+    } catch (e) {
+      setStageError(e instanceof Error ? e.message : 'Failed.')
+    } finally {
+      setStageSubmitting(false)
+    }
+  }
+
+  // ── Feedback ──
+  const openFeedbackModal = () => {
+    setFeedbackForm({ rating: 0, hoverRating: 0, notes: '' })
+    setFeedbackError('')
+    setFeedbackModalOpen(true)
+  }
+
+  const submitFeedback = async () => {
+    if (feedbackForm.rating === 0) { setFeedbackError('Please select a star rating.'); return }
+    if (!feedbackForm.notes.trim()) { setFeedbackError('Feedback notes are required.'); return }
+    setFeedbackSubmitting(true)
+    setFeedbackError('')
+    try {
+      // Determine who is giving feedback
+      const { data: { session } } = await supabase.auth.getSession()
+      const userEmail = session?.user?.email ?? ''
+      let giverLabel = 'Admin'
+      if (userEmail) {
+        // Check if it's a trainer
+        const { data: trRow } = await supabase
+          .from('trainers')
+          .select('trainer_name')
+          .eq('email', userEmail)
+          .maybeSingle()
+        if (trRow?.trainer_name) giverLabel = trRow.trainer_name
+      }
+
+      // Insert as progress_activity so it appears in timeline
+      const { error: actErr } = await supabase.from('progress_activities').insert({
+        student_id: studentId,
+        activity_type: 'feedback',
+        status: 'completed',
+        activity_date: new Date().toISOString().slice(0, 10),
+        progress_score: feedbackForm.rating * 20, // 1-3 → 20-60
+        notes: feedbackForm.notes.trim(),
+        completion_feedback: giverLabel,
+      })
+      if (actErr) { setFeedbackError(actErr.message); return }
+
+      // Update trainer_rating on student to the latest rating
+      const { error: upErr } = await supabase
+        .from('students')
+        .update({
+          trainer_rating: feedbackForm.rating,
+          comments: feedbackForm.notes.trim(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', studentId)
+      if (upErr) { setFeedbackError(upErr.message); return }
+
+      setFeedbackModalOpen(false)
+      void load()
+    } catch (e) {
+      setFeedbackError(e instanceof Error ? e.message : 'Failed.')
+    } finally {
+      setFeedbackSubmitting(false)
+    }
+  }
+
+  // ── Simple actions ──
+  const handleUploadResume = () => {
+    setTab('personal')
+    openEdit()
+  }
+
+  const handleSendWhatsApp = () => {
+    if (!student?.phone) return
+    const cleaned = student.phone.replace(/[^0-9]/g, '')
+    const num = cleaned.startsWith('91') ? cleaned : `91${cleaned}`
+    window.open(`https://wa.me/${num}`, '_blank')
+  }
+
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !student) return
+    // Reset input so same file can be re-selected
+    e.target.value = ''
+
+    // Validate type
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError('Only JPG, PNG, or WebP images are allowed.')
+      return
+    }
+    // Validate size (2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Image must be less than 2 MB.')
+      return
+    }
+
+    // Validate dimensions — must be ≤ 500x500
+    const valid = await new Promise<boolean>((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        if (img.width > 500 || img.height > 500) {
+          setError(`Image is ${img.width}×${img.height}px — must be 500×500px or smaller.`)
+          resolve(false)
+        } else {
+          resolve(true)
+        }
+      }
+      img.onerror = () => { setError('Could not read image.'); resolve(false) }
+      img.src = URL.createObjectURL(file)
+    })
+    if (!valid) return
+
+    setAvatarUploading(true)
+    setError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) { setError('Not authenticated.'); return }
+
+      const fd = new FormData()
+      fd.append('file', file)
+
+      const res = await fetch(`${getBackendOrigin()}/api/admin/students/${student.id}/avatar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: fd,
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string; avatar_url?: string }
+      if (!res.ok) {
+        setError(body.error ?? 'Avatar upload failed.')
+        return
+      }
+      void load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Avatar upload failed.')
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
+
+  const hasPhone = !!(student && student.phone && student.phone.trim())
+
+  const categoryConfig: Record<TimelineCategory, { color: string; label: string }> = {
+    activity: { color: '#2563EB', label: 'Activity' },
+    payment: { color: '#16A34A', label: 'Payment' },
+    interview: { color: '#D97706', label: 'Interview' },
+    placement: { color: '#7C3AED', label: 'Placement' },
+    mock_interview: { color: '#EC4899', label: 'Mock Interview' },
+    class_attendance: { color: '#0891B2', label: 'Live Class' },
+    batch_enrollment: { color: '#4F46E5', label: 'Batch' },
+    stage_change: { color: '#F59E0B', label: 'Stage Update' },
+  }
+
+  const timelineItems = useMemo(() => {
+    type Item = {
+      id: string
+      sort: number
+      title: string
+      sub: string
+      dateLabel: string
+      category: TimelineCategory
+      viewLink?: string
+    }
+    const out: Item[] = []
+
+    // Progress activities
     for (const a of activities) {
       const d = a.activity_date ?? a.created_at?.slice(0, 10) ?? null
+      const isStageChange = a.activity_type?.toLowerCase().includes('stage')
       out.push({
         id: `act-${a.id}`,
         sort: d ? new Date(d).getTime() : 0,
-        title: a.activity_type,
-        sub: displayDash(a.notes),
-        dateLabel: formatShortDate(d),
+        title: isStageChange ? `Stage updated to ${humanizeStage(a.notes ?? a.activity_type)}` : humanizeStage(a.activity_type),
+        sub: isStageChange ? (a.notes ? `${a.notes}` : '—') : displayDash(a.notes),
+        dateLabel: formatDate(d),
+        category: isStageChange ? 'stage_change' : 'activity',
       })
     }
+
+    // Payments
     for (const p of payments) {
       out.push({
         id: `pay-${p.id}`,
         sort: p.paid_on ? new Date(p.paid_on).getTime() : 0,
         title: `Payment ₹${Number(p.amount).toLocaleString('en-IN')}`,
-        sub: `${p.payment_mode.replace(/_/g, ' ')}${p.notes ? ` · ${p.notes}` : ''}`,
-        dateLabel: formatShortDate(p.paid_on),
+        sub: `${humanizeStage(p.payment_mode)}${p.notes ? ` · ${p.notes}` : ''}`,
+        dateLabel: formatDate(p.paid_on),
+        category: 'payment',
       })
     }
+
+    // Interviews
     for (const i of interviews) {
       out.push({
         id: `int-${i.id}`,
         sort: i.interview_date ? new Date(i.interview_date).getTime() : 0,
         title: `Interview · ${i.company_name}`,
         sub: `${humanizeStage(i.stage)}${i.role_title ? ` · ${i.role_title}` : ''}`,
-        dateLabel: formatShortDate(i.interview_date),
+        dateLabel: formatDate(i.interview_date),
+        category: 'interview',
+        viewLink: '/admin/placement',
       })
     }
+
+    // Placements
+    for (const pl of placements) {
+      const d = pl.placement_date ?? pl.created_at?.slice(0, 10) ?? null
+      const salaryStr = pl.salary_package ? ` · ₹${Number(pl.salary_package).toLocaleString('en-IN')} LPA` : ''
+      out.push({
+        id: `plc-${pl.id}`,
+        sort: d ? new Date(d).getTime() : 0,
+        title: `Placed at ${pl.company_name}`,
+        sub: `${pl.job_role ?? 'Role N/A'}${salaryStr}${pl.notes ? ` · ${pl.notes}` : ''}`,
+        dateLabel: formatDate(d),
+        category: 'placement',
+        viewLink: '/admin/placement',
+      })
+    }
+
+    // Mock interviews
+    for (const m of mockInterviews) {
+      const d = m.scheduled_at?.slice(0, 10) ?? m.created_at?.slice(0, 10) ?? null
+      const ratingStr = m.overall_rating != null ? ` · Rating: ${m.overall_rating}/10` : ''
+      out.push({
+        id: `mock-${m.id}`,
+        sort: d ? new Date(d).getTime() : 0,
+        title: `Mock Interview ${humanizeStage(m.status)}`,
+        sub: `${m.notes ?? '—'}${ratingStr}`,
+        dateLabel: formatDate(d),
+        category: 'mock_interview',
+        viewLink: '/admin/placement',
+      })
+    }
+
+    // Class attendance (live classes attended)
+    for (const ca of classAttendance) {
+      const session = ca.class_sessions
+      const d = ca.marked_at?.slice(0, 10) ?? session?.starts_at?.slice(0, 10) ?? null
+      const className = session?.title ?? 'Untitled Class'
+      const statusLabel = ca.status === 'present' ? 'Attended' : ca.status === 'late' ? 'Late' : ca.status === 'excused' ? 'Excused' : 'Absent'
+      out.push({
+        id: `cls-${ca.id}`,
+        sort: d ? new Date(d).getTime() : 0,
+        title: `Live Class · ${className}`,
+        sub: statusLabel,
+        dateLabel: formatDate(d),
+        category: 'class_attendance',
+        viewLink: session?.batch_id ? `/admin/batches/${session.batch_id}/classes/${session.id}` : undefined,
+      })
+    }
+
+    // Batch enrollment history
+    for (const bh of batchHistory) {
+      const batchCode = bh.batches?.batch_code ?? 'Unknown Batch'
+      const batchId = bh.batches?.id ?? bh.batch_id
+
+      // Enrolled event
+      const joinDate = bh.joined_at ?? bh.created_at?.slice(0, 10) ?? null
+      out.push({
+        id: `benr-${bh.id}`,
+        sort: joinDate ? new Date(joinDate).getTime() : 0,
+        title: `Enrolled in ${batchCode}`,
+        sub: bh.is_active ? 'Currently active' : 'No longer active',
+        dateLabel: formatDate(joinDate),
+        category: 'batch_enrollment',
+        viewLink: `/admin/batches/${batchId}/overview`,
+      })
+
+      // Left / dropped out event
+      if (bh.left_at) {
+        out.push({
+          id: `bleft-${bh.id}`,
+          sort: new Date(bh.left_at).getTime(),
+          title: `Left ${batchCode}`,
+          sub: bh.dropout_reason ? `Reason: ${bh.dropout_reason}` : 'No reason specified',
+          dateLabel: formatDate(bh.left_at),
+          category: 'batch_enrollment',
+          viewLink: `/admin/batches/${batchId}/overview`,
+        })
+      }
+    }
+
     out.sort((x, y) => y.sort - x.sort)
     return out
-  }, [activities, payments, interviews])
-
-  const filledStarCount = trainerRatingFilledStars(student?.trainer_rating ?? null)
-  const activeNow = student != null && isActiveStudent(student.last_activity_at)
-
-  const progressPct = Math.min(
-    100,
-    Math.max(0, Math.round(student?.progress_pct ?? 0)),
-  )
-  const attendPct = Math.min(
-    100,
-    Math.max(0, Math.round(student?.attendance_pct ?? 0)),
-  )
+  }, [activities, payments, interviews, placements, mockInterviews, classAttendance, batchHistory])
 
   if (loading) {
-    return (
-      <div className="admin-student-profile-page">
-        <p className="asp-muted">Loading student…</p>
-      </div>
-    )
+    return <SpxLoader label="Loading student…" />
   }
 
   if (error && !student) {
     return (
-      <div className="admin-student-profile-page">
-        <button type="button" className="asp-back" onClick={onBack}>
-          <ArrowLeft size={18} strokeWidth={2} />
-          <span>Back to Students</span>
-        </button>
-        <p className="asp-error">{error}</p>
+      <div className="spx-page">
+        <div className="spx-topbar">
+          <button type="button" className="spx-back-btn" onClick={onBack}>
+            <ArrowLeft size={15} /> Back to Students
+          </button>
+        </div>
+        <div style={{ padding: 32, color: '#DC2626' }}>{error}</div>
       </div>
     )
   }
 
-  if (!student) {
-    return null
-  }
+  if (!student) return null
+
+  const activeNow = isActiveStudent(student.last_activity_at)
+  const progressPct = Math.min(100, Math.max(0, Math.round(student.progress_pct ?? 0)))
+  const attendPct = Math.min(100, Math.max(0, Math.round(student.attendance_pct ?? 0)))
+  const courseFee = Number(student.course_fee ?? 0)
+  const amountPaid = Number(student.amount_paid ?? 0)
+  const pending = Math.max(0, courseFee - amountPaid)
+  const payPct = courseFee > 0 ? Math.round((amountPaid / courseFee) * 100) : 0
+  const filledStars = Math.min(3, Math.max(0, Math.round(student.trainer_rating ?? 0)))
 
   return (
-    <div className="admin-student-profile-page">
-      <button type="button" className="asp-back" onClick={onBack}>
-        <ArrowLeft size={18} strokeWidth={2} className="asp-back-icon" />
-        <span>Back to Students</span>
-      </button>
-
-      {error ? <p className="asp-error-banner">{error}</p> : null}
-
-      <header className="asp-header-card">
-        <div className="asp-header-grid">
-          <div className="asp-profile-block">
-            <div className="asp-avatar-wrap">
-              <div className="asp-avatar">{studentInitials(student.student_name)}</div>
-              <span className="asp-avatar-dot" aria-hidden />
-            </div>
-            <div className="asp-profile-info">
-              <div className="asp-name-row">
-                <h1 className="asp-name">{student.student_name}</h1>
-                <span className="asp-name-rating-stars" aria-label={`Trainer rating ${filledStarCount} of 3`}>
-                  {[0, 1, 2].map((i) => (
-                    <Star
-                      key={i}
-                      size={14}
-                      strokeWidth={2}
-                      className={i < filledStarCount ? 'asp-star asp-star-filled' : 'asp-star asp-star-empty'}
-                      fill={i < filledStarCount ? '#F59E0B' : 'none'}
-                      color={i < filledStarCount ? '#F59E0B' : '#CBD5E1'}
-                    />
-                  ))}
-                </span>
-              </div>
-              <div className="asp-contact-list">
-                <div className="asp-contact-row">
-                  <Mail size={16} strokeWidth={2} className="asp-contact-ic" />
-                  <span className={isFilled(student.email) ? 'asp-contact-text' : 'asp-empty-value'}>
-                    {isFilled(student.email) ? student.email : emptyMessage('available')}
-                  </span>
-                </div>
-                <div className="asp-contact-row">
-                  <Phone size={16} strokeWidth={2} className="asp-contact-ic" />
-                  <span className={isFilled(student.phone) ? 'asp-contact-text' : 'asp-empty-value'}>
-                    {isFilled(student.phone) ? student.phone! : emptyMessage('available')}
-                  </span>
-                </div>
-              </div>
-              <div className="asp-profile-status-row">
-                <span className="asp-stage-pill">{humanizeStage(student.stage)}</span>
-                <span className={`asp-status-badge ${activeNow ? '' : 'is-inactive'}`}>
-                  {activeNow ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="asp-info-col asp-info-col-border">
-            <div className="asp-metric">
-              <Layers size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Current batch</span>
-                <span
-                  className={
-                    isFilled(primaryBatch?.batch_code ?? null)
-                      ? 'asp-metric-value'
-                      : 'asp-empty-value'
-                  }
-                >
-                  {isFilled(primaryBatch?.batch_code ?? null)
-                    ? primaryBatch!.batch_code
-                    : emptyMessage('assigned')}
-                </span>
-              </div>
-            </div>
-            <div className="asp-metric">
-              <User size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Trainer</span>
-                <span
-                  className={
-                    isFilled(primaryBatch?.trainer_name ?? null)
-                      ? 'asp-metric-value'
-                      : 'asp-empty-value'
-                  }
-                >
-                  {isFilled(primaryBatch?.trainer_name ?? null)
-                    ? primaryBatch!.trainer_name!
-                    : emptyMessage('trainer')}
-                </span>
-              </div>
-            </div>
-            <div className="asp-metric">
-              <Calendar size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Joined on</span>
-                {primaryBatch?.joined_at ? (
-                  <span className="asp-metric-value">{formatJoined(primaryBatch.joined_at)}</span>
-                ) : (
-                  <span className="asp-empty-value">{emptyMessage('available')}</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="asp-info-col">
-            <div className="asp-metric">
-              <Target size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Current stage</span>
-                <span className="asp-metric-value">{humanizeStage(student.stage)}</span>
-              </div>
-            </div>
-            <div className="asp-metric">
-              <Percent size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Attendance</span>
-                {student.attendance_pct != null ? (
-                  <span className="asp-metric-value">{`${attendPct}%`}</span>
-                ) : (
-                  <span className="asp-empty-value">{emptyMessage('available')}</span>
-                )}
-              </div>
-            </div>
-            <div className="asp-metric asp-metric-progress">
-              <TrendingUp size={20} strokeWidth={2} className="asp-metric-icon-side" />
-              <div className="asp-metric-body">
-                <span className="asp-metric-label">Progress</span>
-                {student.progress_pct != null ? (
-                  <>
-                    <span className="asp-metric-value">{`${progressPct}%`}</span>
-                    <div className="asp-progress-below" role="presentation">
-                      <div className="asp-progress-track">
-                        <div className="asp-progress-fill" style={{ width: `${progressPct}%` }} />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <span className="asp-empty-value">{emptyMessage('available')}</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="asp-header-actions" ref={moreRef}>
-            <button type="button" className="asp-btn asp-btn-secondary asp-btn-header" onClick={openEdit}>
-              <Pencil size={14} strokeWidth={2} />
-              Edit
-            </button>
-            <div className="asp-more-wrap">
-              <button
-                type="button"
-                className="asp-btn asp-btn-ghost asp-btn-header"
-                onClick={() => setMoreOpen((o) => !o)}
-                aria-expanded={moreOpen}
-              >
-                More Actions
-                <MoreHorizontal size={14} strokeWidth={2} />
-              </button>
-              {moreOpen ? (
-                <div className="asp-dropdown">
-                  <button
-                    type="button"
-                    onClick={() => copyText('Student ID', student.id)}
-                  >
-                    Copy student ID
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => copyText('Email', student.email)}
-                  >
-                    Copy email
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="asp-tabs-outer">
-        <div className="asp-tabs-scroll">
-          <div className="asp-tabs">
-            {TABS.map(({ key, label, icon: Icon }) => (
-              <button
-                key={key}
-                type="button"
-                className={`asp-tab ${tab === key ? 'is-active' : ''}`}
-                onClick={() => setTab(key)}
-              >
-                <Icon size={16} strokeWidth={2} />
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="asp-content">
-        {tab === 'personal' ? (
-          <section className="asp-card asp-personal-combined">
-            <div className="asp-personal-block">
-              <div className="asp-card-head">
-                <div className="asp-card-head-left">
-                  <User size={18} strokeWidth={2} className="asp-card-head-icon" />
-                  <h2 className="asp-card-title">Basic information</h2>
-                </div>
-                <button type="button" className="asp-btn asp-btn-ghost asp-btn-sm" onClick={openEdit}>
-                  Edit profile
-                </button>
-              </div>
-              <div className="asp-field-grid asp-field-grid-5">
-                {(
-                  [
-                    ['Full name', student.student_name, 'available' as const],
-                    ['Email', student.email, 'available' as const],
-                    ['Phone', student.phone, 'available' as const],
-                    ['Gender', student.gender, 'available' as const],
-                    ['City', student.location, 'assigned' as const],
-                  ] as const
-                ).map(([label, val, kind]) => (
-                  <div key={label} className="asp-field">
-                    <span className="asp-field-label">{label}</span>
-                    <span className={isFilled(val) ? 'asp-field-value' : 'asp-empty-value'}>
-                      {isFilled(val) ? val! : emptyMessage(kind)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="asp-personal-divider" role="presentation" />
-
-            <div className="asp-personal-block asp-personal-block-edu">
-              <div className="asp-card-head">
-                <div className="asp-card-head-left">
-                  <GraduationCap size={18} strokeWidth={2} className="asp-card-head-icon" />
-                  <h2 className="asp-card-title">Background</h2>
-                </div>
-              </div>
-              <div className="asp-field-grid asp-field-grid-5">
-                {(
-                  [
-                    ['Degree', student.degree, 'available' as const],
-                    ['Previous company', student.previous_company, 'assigned' as const],
-                    ['Previous role', student.previous_job_role, 'available' as const],
-                    [
-                      'Experience',
-                      student.experience_years != null ? `${student.experience_years} yrs` : null,
-                      'available' as const,
-                    ],
-                    ['Domain', student.domain, 'assigned' as const],
-                  ] as const
-                ).map(([label, val, kind]) => (
-                  <div key={label} className="asp-field">
-                    <span className="asp-field-label">{label}</span>
-                    <span className={isFilled(val) ? 'asp-field-value' : 'asp-empty-value'}>
-                      {isFilled(val) ? val! : emptyMessage(kind)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="asp-personal-divider" role="presentation" />
-
-            <div className="asp-personal-block">
-              <div className="asp-card-head">
-                <div className="asp-card-head-left">
-                  <Link2 size={18} strokeWidth={2} className="asp-card-head-icon" />
-                  <h2 className="asp-card-title">Profile links</h2>
-                </div>
-              </div>
-              <div className="asp-link-grid">
-                {(
-                  [
-                    {
-                      title: 'Resume',
-                      sub: student.resume_url ? 'Open file' : 'Not added',
-                      url: student.resume_url,
-                      icon: FileText,
-                    },
-                    {
-                      title: 'LinkedIn',
-                      sub: student.linkedin_url ? 'View profile' : 'Not added',
-                      url: student.linkedin_url,
-                      icon: Link2,
-                    },
-                    {
-                      title: 'Naukri',
-                      sub: student.naukri_url ? 'View profile' : 'Not added',
-                      url: student.naukri_url,
-                      icon: Link2,
-                    },
-                    {
-                      title: 'Portfolio',
-                      sub: student.portfolio_url ? 'View site' : 'Not added',
-                      url: student.portfolio_url,
-                      icon: ExternalLink,
-                    },
-                  ] as const
-                ).map((item) =>
-                  item.url ? (
-                    <a
-                      key={item.title}
-                      href={item.url}
-                      className="asp-link-tile"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <div className="asp-link-tile-left">
-                        <item.icon size={18} strokeWidth={2} className="asp-card-head-icon" />
-                        <div>
-                          <div className="asp-link-tile-title">{item.title}</div>
-                          <div className="asp-link-tile-sub">{item.sub}</div>
-                        </div>
-                      </div>
-                      <ExternalLink size={16} strokeWidth={2} className="asp-link-tile-ext" />
-                    </a>
-                  ) : (
-                    <button key={item.title} type="button" className="asp-link-tile is-disabled">
-                      <div className="asp-link-tile-left">
-                        <item.icon size={18} strokeWidth={2} className="asp-card-head-icon" />
-                        <div>
-                          <div className="asp-link-tile-title">{item.title}</div>
-                          <div className="asp-link-tile-sub">{item.sub}</div>
-                        </div>
-                      </div>
-                      <ExternalLink size={16} strokeWidth={2} className="asp-link-tile-ext" />
-                    </button>
-                  ),
-                )}
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {tab === 'timeline' ? (
-          <section className="asp-card">
-            <div className="asp-card-head">
-              <div className="asp-card-head-left">
-                <Activity size={18} strokeWidth={2} className="asp-card-head-icon" />
-                <h2 className="asp-card-title">Activity timeline</h2>
-              </div>
-            </div>
-            {timelineItems.length === 0 ? (
-              <p className="asp-muted">No activity, payments, or interviews recorded yet.</p>
-            ) : (
-              <ul className="asp-timeline">
-                {timelineItems.map((row) => (
-                  <li key={row.id} className="asp-timeline-item">
-                    <div className="asp-timeline-dot" />
-                    <div className="asp-timeline-body">
-                      <div className="asp-timeline-top">
-                        <strong>{row.title}</strong>
-                        <span className="asp-timeline-date">{row.dateLabel}</span>
-                      </div>
-                      <p className="asp-timeline-sub">{row.sub}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        ) : null}
-
-        {tab === 'payments' ? (
-          <section className="asp-card asp-card-table-wrap">
-            <div className="asp-card-head">
-              <div className="asp-card-head-left">
-                <CreditCard size={18} strokeWidth={2} className="asp-card-head-icon" />
-                <h2 className="asp-card-title">Payments</h2>
-              </div>
-            </div>
-            {payments.length === 0 ? (
-              <p className="asp-muted">No payment records.</p>
-            ) : (
-              <div className="asp-table-scroll">
-                <table className="asp-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Amount</th>
-                      <th>Mode</th>
-                      <th>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payments.map((p) => (
-                      <tr key={p.id}>
-                        <td>{formatShortDate(p.paid_on)}</td>
-                        <td>₹{Number(p.amount).toLocaleString('en-IN')}</td>
-                        <td>{humanizeStage(p.payment_mode)}</td>
-                        <td>{displayDash(p.notes)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ) : null}
-
-        {tab === 'interviews' ? (
-          <section className="asp-card asp-card-table-wrap">
-            <div className="asp-card-head">
-              <div className="asp-card-head-left">
-                <Users size={18} strokeWidth={2} className="asp-card-head-icon" />
-                <h2 className="asp-card-title">Interviews</h2>
-              </div>
-            </div>
-            {interviews.length === 0 ? (
-              <p className="asp-muted">No interviews logged.</p>
-            ) : (
-              <div className="asp-table-scroll">
-                <table className="asp-table">
-                  <thead>
-                    <tr>
-                      <th>Company</th>
-                      <th>Role</th>
-                      <th>Stage</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {interviews.map((i) => (
-                      <tr key={i.id}>
-                        <td>{i.company_name}</td>
-                        <td>{displayDash(i.role_title)}</td>
-                        <td>{humanizeStage(i.stage)}</td>
-                        <td>{formatShortDate(i.interview_date)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ) : null}
-
-        {tab === 'documents' ? (
-          <section className="asp-card">
-            <div className="asp-card-head">
-              <div className="asp-card-head-left">
-                <FolderOpen size={18} strokeWidth={2} className="asp-card-head-icon" />
-                <h2 className="asp-card-title">Documents</h2>
-              </div>
-            </div>
-            {student.resume_url ? (
-              <a
-                href={student.resume_url}
-                target="_blank"
-                rel="noreferrer"
-                className="asp-doc-link"
-              >
-                <FileText size={18} strokeWidth={2} />
-                Resume
-                <ExternalLink size={16} strokeWidth={2} />
-              </a>
-            ) : (
-              <p className="asp-muted">No documents uploaded. Add a resume from Edit student (upload or URL).</p>
-            )}
-          </section>
-        ) : null}
-
-        {tab === 'feedback' ? (
-          <section className="asp-card">
-            <div className="asp-card-head">
-              <div className="asp-card-head-left">
-                <MessageSquare size={18} strokeWidth={2} className="asp-card-head-icon" />
-                <h2 className="asp-card-title">Trainer feedback</h2>
-              </div>
-            </div>
-            <p className="asp-muted">
-              Trainer rating:{' '}
-              <strong className="asp-strong">
-                {student.trainer_rating != null ? `${student.trainer_rating.toFixed(1)} / 5` : '—'}
-              </strong>
-            </p>
-            <p className="asp-feedback-body">{displayDash(student.comments)}</p>
-            <button type="button" className="asp-btn asp-btn-secondary" onClick={openEdit}>
-              Edit notes
-            </button>
-          </section>
-        ) : null}
-      </div>
-
-      {editOpen ? (
-        <div className="asp-modal-overlay" role="presentation" onClick={() => setEditOpen(false)}>
-          <div
-            className="asp-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="asp-edit-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="asp-modal-head">
-              <h2 id="asp-edit-title" className="asp-modal-title">
-                Edit student
-              </h2>
-              <button type="button" className="asp-modal-close" onClick={() => setEditOpen(false)}>
-                ×
-              </button>
-            </div>
-            <div className="asp-modal-body">
-              <label className="asp-label">
-                Full name
-                <input
-                  className="asp-input"
-                  value={editForm.student_name}
-                  onChange={(e) => setEditForm((f) => ({ ...f, student_name: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Email
-                <input
-                  className="asp-input"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Phone
-                <input
-                  className="asp-input"
-                  value={editForm.phone}
-                  onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Gender
-                <input
-                  className="asp-input"
-                  value={editForm.gender}
-                  onChange={(e) => setEditForm((f) => ({ ...f, gender: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                City
-                <input
-                  className="asp-input"
-                  value={editForm.location}
-                  onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Degree
-                <input
-                  className="asp-input"
-                  value={editForm.degree}
-                  onChange={(e) => setEditForm((f) => ({ ...f, degree: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Previous company
-                <input
-                  className="asp-input"
-                  value={editForm.previous_company}
-                  onChange={(e) => setEditForm((f) => ({ ...f, previous_company: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Previous role
-                <input
-                  className="asp-input"
-                  value={editForm.previous_job_role}
-                  onChange={(e) => setEditForm((f) => ({ ...f, previous_job_role: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Experience (years)
-                <input
-                  className="asp-input"
-                  value={editForm.experience_years}
-                  onChange={(e) => setEditForm((f) => ({ ...f, experience_years: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Domain
-                <input
-                  className="asp-input"
-                  value={editForm.domain}
-                  onChange={(e) => setEditForm((f) => ({ ...f, domain: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Stage
-                <select
-                  className="asp-input"
-                  value={editForm.stage}
-                  onChange={(e) => setEditForm((f) => ({ ...f, stage: e.target.value }))}
-                >
-                  <option value="training">Training</option>
-                  <option value="trial_classes">Trial classes</option>
-                  <option value="mock_interviews">Mock interviews</option>
-                  <option value="searching_for_jobs">Searching for jobs</option>
-                  <option value="taking_interviews">Taking interviews</option>
-                  <option value="placed">Placed</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </label>
-              <label className="asp-label">
-                Payment status
-                <select
-                  className="asp-input"
-                  value={editForm.payment_status}
-                  onChange={(e) => setEditForm((f) => ({ ...f, payment_status: e.target.value }))}
-                >
-                  <option value="pending">Pending</option>
-                  <option value="partial">Partial</option>
-                  <option value="paid">Paid</option>
-                  <option value="refunded">Refunded</option>
-                </select>
-              </label>
-              <label className="asp-label">
-                Resume
-                <input
-                  type="file"
-                  className="asp-input asp-input-file"
-                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] ?? null
-                    setPendingResumeFile(f)
-                  }}
-                />
-                {pendingResumeFile ? (
-                  <span className="asp-muted">{pendingResumeFile.name} — will upload on Save</span>
-                ) : editForm.resume_url.trim() ? (
-                  <span className="asp-muted">Current link kept unless you replace it below.</span>
-                ) : (
-                  <span className="asp-muted">
-                    PDF or Word · uploads go through the app backend (service role). Ensure it is running
-                    and your account has admin access.
-                  </span>
-                )}
-              </label>
-              <label className="asp-label">
-                Resume URL (optional)
-                <input
-                  className="asp-input"
-                  placeholder="https://…"
-                  value={editForm.resume_url}
-                  onChange={(e) => setEditForm((f) => ({ ...f, resume_url: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                LinkedIn URL
-                <input
-                  className="asp-input"
-                  placeholder="https://www.linkedin.com/in/…"
-                  value={editForm.linkedin_url}
-                  onChange={(e) => setEditForm((f) => ({ ...f, linkedin_url: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Naukri URL
-                <input
-                  className="asp-input"
-                  placeholder="https://…"
-                  value={editForm.naukri_url}
-                  onChange={(e) => setEditForm((f) => ({ ...f, naukri_url: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Portfolio URL
-                <input
-                  className="asp-input"
-                  placeholder="https://…"
-                  value={editForm.portfolio_url}
-                  onChange={(e) => setEditForm((f) => ({ ...f, portfolio_url: e.target.value }))}
-                />
-              </label>
-              <label className="asp-label">
-                Internal notes
-                <textarea
-                  className="asp-textarea"
-                  rows={4}
-                  value={editForm.comments}
-                  onChange={(e) => setEditForm((f) => ({ ...f, comments: e.target.value }))}
-                />
-              </label>
-            </div>
-            <div className="asp-modal-foot">
-              <button type="button" className="asp-btn asp-btn-ghost" onClick={() => setEditOpen(false)}>
+    <div className="spx-page">
+      <div className="spx-topbar">
+        <button type="button" className="spx-back-btn" onClick={onBack}>
+          <ArrowLeft size={15} /> Back to Students
+        </button>
+        <div className="spx-topbar-right" ref={moreRef}>
+          {editMode ? (
+            <>
+              <button type="button" className="spx-msg-btn" onClick={cancelEdit} disabled={saving}>
                 Cancel
               </button>
               <button
                 type="button"
-                className="asp-btn asp-btn-primary"
-                disabled={saving}
+                className="spx-primary-action"
+                style={{ width: 'auto', margin: 0, padding: '7px 16px' }}
                 onClick={() => void saveEdit()}
+                disabled={saving}
               >
                 {saving ? 'Saving…' : 'Save'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="spx-msg-btn" onClick={openEdit}>
+                <Pencil size={14} /> Edit
+              </button>
+              <button
+                type="button"
+                className="spx-more-btn"
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-label="More actions"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {moreOpen && (
+                <div className="spx-dropdown">
+                  <button type="button" onClick={() => copyText('Student ID', student.id)}>
+                    Copy student ID
+                  </button>
+                  <button type="button" onClick={() => copyText('Email', student.email)}>
+                    Copy email
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {error && <div className="spx-error-banner">{error}</div>}
+
+      <div className="spx-body">
+        <div className="spx-col-main">
+          {/* Hero */}
+          <div className="spx-hero">
+            <div className="spx-hero-top">
+              <div className="spx-avatar-wrap" onClick={() => avatarInputRef.current?.click()} title="Click to upload photo">
+                {student.avatar_url ? (
+                  <img src={student.avatar_url} alt={student.student_name} className="spx-avatar spx-avatar-img" />
+                ) : (
+                  <div className="spx-avatar">{studentInitials(student.student_name)}</div>
+                )}
+                <div className={`spx-avatar-overlay${avatarUploading ? ' uploading' : ''}`}>
+                  {avatarUploading ? (
+                    <span className="spx-avatar-spinner" />
+                  ) : (
+                    <>
+                      <Upload size={18} />
+                      <span>Upload</span>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={(e) => void handleAvatarSelect(e)}
+                />
+                {activeNow && <div className="spx-online-dot" />}
+              </div>
+              <div className="spx-hero-info">
+                <div className="spx-hero-name-row">
+                  <span className="spx-hero-name">{student.student_name}</span>
+                  <StarRating filled={filledStars} total={3} />
+                </div>
+                <div className="spx-hero-meta">
+                  <span className="spx-meta-item">
+                    <Mail size={14} /> {displayDash(student.email)}
+                  </span>
+                  {isFilled(student.phone) && (
+                    <span className="spx-meta-item">
+                      <Phone size={14} /> {student.phone}
+                    </span>
+                  )}
+                </div>
+                <div className="spx-badge-row">
+                  <span className="spx-badge spx-badge-training">{humanizeStage(student.stage)}</span>
+                  {student.payment_status === 'paid' && (
+                    <span className="spx-badge spx-badge-pay">
+                      <CheckCircle size={11} /> Payment Clear
+                    </span>
+                  )}
+                  <span
+                    className={`spx-badge ${activeNow ? 'spx-badge-active' : 'spx-badge-inactive'}`}
+                  >
+                    <CheckCircle size={11} /> {activeNow ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="spx-hero-stats">
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Current Batch</div>
+                <div className="spx-stat-val">{primaryBatch?.batch_code ?? '—'}</div>
+              </div>
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Current Stage</div>
+                <div className="spx-stat-val">{humanizeStage(student.stage)}</div>
+              </div>
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Trainer</div>
+                <div className="spx-stat-val">{primaryBatch?.trainer_name ?? '—'}</div>
+              </div>
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Attendance</div>
+                <div className="spx-stat-val">
+                  {student.attendance_pct != null ? `${attendPct}%` : '—'}
+                </div>
+                {student.attendance_pct != null && <ProgressBar pct={attendPct} />}
+              </div>
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Joined On</div>
+                <div className="spx-stat-val">{formatDate(primaryBatch?.joined_at)}</div>
+              </div>
+              <div className="spx-stat">
+                <div className="spx-stat-lbl">Progress</div>
+                <div className="spx-stat-val">
+                  {student.progress_pct != null ? `${progressPct}%` : '—'}
+                </div>
+                {student.progress_pct != null && (
+                  <ProgressBar pct={progressPct} color="#F59E0B" />
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="spx-tabs">
+            <button
+              type="button"
+              className={`spx-tab ${tab === 'personal' ? 'active' : ''}`}
+              onClick={() => setTab('personal')}
+            >
+              Personal Details
+            </button>
+            <button
+              type="button"
+              className={`spx-tab ${tab === 'timeline' ? 'active' : ''}`}
+              onClick={() => setTab('timeline')}
+            >
+              Activity Timeline
+            </button>
+          </div>
+
+          {tab === 'personal' && (
+            <>
+              {/* Basic Details */}
+              <div className="spx-section">
+                <div className="spx-section-hdr">
+                  <span className="spx-section-title">
+                    <User size={16} /> Basic Details
+                  </span>
+                </div>
+                <div className="spx-fields spx-fields-5">
+                  <FieldEditable
+                    label="Full Name"
+                    editing={editMode}
+                    value={editMode ? editForm.student_name : student.student_name}
+                    onChange={(v) => setEditForm((f) => ({ ...f, student_name: v }))}
+                  />
+                  <FieldEditable
+                    label="Email"
+                    type="email"
+                    editing={editMode}
+                    value={editMode ? editForm.email : student.email}
+                    onChange={(v) => setEditForm((f) => ({ ...f, email: v }))}
+                  />
+                  <FieldEditable
+                    label="Phone"
+                    type="tel"
+                    editing={editMode}
+                    value={editMode ? editForm.phone : student.phone}
+                    onChange={(v) => setEditForm((f) => ({ ...f, phone: v }))}
+                  />
+                  <FieldEditable
+                    label="Gender"
+                    editing={editMode}
+                    value={editMode ? editForm.gender : student.gender}
+                    onChange={(v) => setEditForm((f) => ({ ...f, gender: v }))}
+                    options={
+                      editMode
+                        ? [
+                            { value: '', label: '—' },
+                            { value: 'Male', label: 'Male' },
+                            { value: 'Female', label: 'Female' },
+                            { value: 'Other', label: 'Other' },
+                          ]
+                        : undefined
+                    }
+                  />
+                  <FieldEditable
+                    label="City"
+                    editing={editMode}
+                    value={editMode ? editForm.location : student.location}
+                    onChange={(v) => setEditForm((f) => ({ ...f, location: v }))}
+                  />
+                </div>
+              </div>
+
+              {/* Education & Professional Background — merged */}
+              <div className="spx-section">
+                <div className="spx-section-hdr">
+                  <span className="spx-section-title">
+                    <GraduationCap size={16} /> Education &amp; Professional Background
+                  </span>
+                </div>
+                <div className="spx-fields spx-fields-5">
+                  <FieldEditable
+                    label="Degree"
+                    editing={editMode}
+                    value={editMode ? editForm.degree : student.degree}
+                    onChange={(v) => setEditForm((f) => ({ ...f, degree: v }))}
+                    options={[{ value: '', label: '—' }, { value: 'MBA', label: 'MBA' }, { value: 'ME/ MTech', label: 'ME/ MTech' }, { value: 'BE/ BTech', label: 'BE/ BTech' }, { value: 'BBA', label: 'BBA' }, { value: 'BCom', label: 'BCom' }, { value: 'BSc', label: 'BSc' }, { value: "master's_degree", label: "Master's Degree" }, { value: 'diploma', label: 'Diploma' }, { value: "bachelor's_degree", label: "Bachelor's Degree" }, { value: 'other', label: 'Other' }]}
+                  />
+                  <FieldEditable
+                    label="Previous Company"
+                    editing={editMode}
+                    value={editMode ? editForm.previous_company : student.previous_company}
+                    onChange={(v) => setEditForm((f) => ({ ...f, previous_company: v }))}
+                  />
+                  <FieldEditable
+                    label="Previous Role"
+                    editing={editMode}
+                    value={editMode ? editForm.previous_job_role : student.previous_job_role}
+                    onChange={(v) => setEditForm((f) => ({ ...f, previous_job_role: v }))}
+                  />
+                  <FieldEditable
+                    label="Experience"
+                    type="number"
+                    editing={editMode}
+                    value={
+                      editMode
+                        ? editForm.experience_years
+                        : student.experience_years != null
+                          ? `${student.experience_years} Years`
+                          : null
+                    }
+                    onChange={(v) => setEditForm((f) => ({ ...f, experience_years: v }))}
+                    placeholder="Years"
+                  />
+                  <FieldEditable
+                    label="Domain"
+                    editing={editMode}
+                    value={editMode ? editForm.domain : student.domain}
+                    onChange={(v) => setEditForm((f) => ({ ...f, domain: v }))}
+                    options={[{ value: '', label: '—' }, { value: 'Sales', label: 'Sales' }, { value: 'Operations', label: 'Operations' }, { value: 'Banking', label: 'Banking' }, { value: 'Finance', label: 'Finance' }, { value: "BPO's", label: "BPO's" }, { value: 'Healthcare', label: 'Healthcare' }, { value: 'Fresher', label: 'Fresher' }, { value: 'Teacher', label: 'Teacher' }, { value: 'Developer', label: 'Developer' }, { value: 'Testing', label: 'Testing' }, { value: 'HR Recruiters', label: 'HR Recruiters' }, { value: 'Digital Marketing', label: 'Digital Marketing' }, { value: 'Engineers', label: 'Engineers' }, { value: 'Support', label: 'Support' }]}
+                  />
+                </div>
+              </div>
+
+              {/* LMS & Batch Details */}
+              <div className="spx-section">
+                <div className="spx-section-hdr">
+                  <span className="spx-section-title">
+                    <Layers size={16} /> LMS &amp; Batch Details
+                  </span>
+                </div>
+                <div className="spx-fields">
+                  <FieldBlock label="Batch Name" value={primaryBatch?.batch_code} />
+                  <FieldBlock label="Trainer" value={primaryBatch?.trainer_name} />
+                  <FieldBlock label="Enrollment Date" value={formatDate(student.enrollment_date)} />
+                  <FieldEditable
+                    label="Current Stage"
+                    editing={editMode}
+                    value={editMode ? editForm.stage : humanizeStage(student.stage)}
+                    onChange={(v) => setEditForm((f) => ({ ...f, stage: v }))}
+                    options={
+                      editMode
+                        ? [
+                            { value: 'training', label: 'Training' },
+                            { value: 'trial_classes', label: 'Trial Classes' },
+                            { value: 'mock_interviews', label: 'Mock Interviews' },
+                            { value: 'searching_for_jobs', label: 'Searching for Jobs' },
+                            { value: 'taking_interviews', label: 'Taking Interviews' },
+                            { value: 'placed', label: 'Placed' },
+                            { value: 'inactive', label: 'Inactive' },
+                          ]
+                        : undefined
+                    }
+                  />
+                  <div>
+                    <div className="spx-field-lbl">Attendance</div>
+                    <div className="spx-field-val">
+                      {student.attendance_pct != null ? `${attendPct}%` : '—'}
+                    </div>
+                    {student.attendance_pct != null && <ProgressBar pct={attendPct} />}
+                  </div>
+                  <div>
+                    <div className="spx-field-lbl">Progress</div>
+                    <div className="spx-field-val">
+                      {student.progress_pct != null ? `${progressPct}%` : '—'}
+                    </div>
+                    {student.progress_pct != null && (
+                      <ProgressBar pct={progressPct} color="#F59E0B" />
+                    )}
+                  </div>
+                  <FieldBlock
+                    label="Last Active"
+                    value={student.last_activity_at ? formatDate(student.last_activity_at) : null}
+                  />
+                </div>
+              </div>
+
+              {/* Payment Details */}
+              <div className="spx-section">
+                <div className="spx-section-hdr">
+                  <span className="spx-section-title">
+                    <CreditCard size={16} /> Payment Details
+                  </span>
+                  {pending > 0 && !editMode && (
+                    <button type="button" className="spx-add-pay-btn" onClick={openPayModal}>
+                      + Add Payment
+                    </button>
+                  )}
+                </div>
+                <div className="spx-pay-summary">
+                  <div className="spx-pay-card">
+                    <div className="spx-pay-lbl">Total fee</div>
+                    {editMode ? (
+                      <input
+                        className="spx-inline-input"
+                        type="number"
+                        value={editForm.course_fee}
+                        onChange={(e) =>
+                          setEditForm((f) => ({ ...f, course_fee: e.target.value }))
+                        }
+                        placeholder="0"
+                      />
+                    ) : (
+                      <div className="spx-pay-val">₹{courseFee.toLocaleString('en-IN')}</div>
+                    )}
+                  </div>
+                  <div className="spx-pay-card">
+                    <div className="spx-pay-lbl">Paid amount</div>
+                    <div className="spx-pay-val">₹{amountPaid.toLocaleString('en-IN')}</div>
+                  </div>
+                  <div className="spx-pay-card">
+                    <div className="spx-pay-lbl">Pending amount</div>
+                    <div className="spx-pay-val red">₹{pending.toLocaleString('en-IN')}</div>
+                  </div>
+                  <div className="spx-pay-card spx-pay-circle-wrap">
+                    <CircleProgress pct={payPct} />
+                    <div>
+                      <div className="spx-pay-lbl">Payment status</div>
+                      <div className="spx-pay-status">{humanizeStage(student.payment_status)}</div>
+                    </div>
+                  </div>
+                </div>
+                {payments.length > 0 && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="spx-ptable">
+                      <thead>
+                        <tr>
+                          <th>Payment date</th>
+                          <th>Amount</th>
+                          <th>Method</th>
+                          <th>Notes</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payments.map((p) => (
+                          <tr key={p.id}>
+                            <td>{formatDate(p.paid_on)}</td>
+                            <td style={{ fontWeight: 500 }}>
+                              ₹{Number(p.amount).toLocaleString('en-IN')}
+                            </td>
+                            <td>{humanizeStage(p.payment_mode)}</td>
+                            <td>{displayDash(p.notes)}</td>
+                            <td>
+                              <span className="spx-success-pill">
+                                <CheckCircle size={11} /> Success
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Profile Links */}
+              <div className="spx-section">
+                <div className="spx-section-hdr">
+                  <span className="spx-section-title">
+                    <Link2 size={16} /> Profile Links
+                  </span>
+                </div>
+                {editMode ? (
+                  <div className="spx-fields spx-fields-5">
+                    <FieldEditable
+                      label="Resume URL"
+                      type="url"
+                      editing
+                      value={editForm.resume_url}
+                      onChange={(v) => setEditForm((f) => ({ ...f, resume_url: v }))}
+                      placeholder="https://…"
+                    />
+                    <FieldEditable
+                      label="LinkedIn"
+                      type="url"
+                      editing
+                      value={editForm.linkedin_url}
+                      onChange={(v) => setEditForm((f) => ({ ...f, linkedin_url: v }))}
+                      placeholder="https://linkedin.com/in/…"
+                    />
+                    <FieldEditable
+                      label="Naukri"
+                      type="url"
+                      editing
+                      value={editForm.naukri_url}
+                      onChange={(v) => setEditForm((f) => ({ ...f, naukri_url: v }))}
+                      placeholder="https://…"
+                    />
+                    <FieldEditable
+                      label="Portfolio"
+                      type="url"
+                      editing
+                      value={editForm.portfolio_url}
+                      onChange={(v) => setEditForm((f) => ({ ...f, portfolio_url: v }))}
+                      placeholder="https://…"
+                    />
+                    <div>
+                      <div className="spx-field-lbl">Resume File</div>
+                      <input
+                        type="file"
+                        className="spx-inline-input"
+                        accept=".pdf,.doc,.docx"
+                        onChange={(e) => setPendingResumeFile(e.target.files?.[0] ?? null)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="spx-plinks">
+                    {student.resume_url ? (
+                      <a
+                        className="spx-plink"
+                        href={student.resume_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <FileText size={14} /> Resume — View / Download
+                      </a>
+                    ) : (
+                      <span className="spx-plink is-disabled">
+                        <FileText size={14} /> Resume — Not added
+                      </span>
+                    )}
+                    {student.linkedin_url ? (
+                      <a
+                        className="spx-plink"
+                        href={student.linkedin_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Link2 size={14} /> LinkedIn
+                      </a>
+                    ) : (
+                      <span className="spx-plink is-disabled">
+                        <Link2 size={14} /> LinkedIn — Not added
+                      </span>
+                    )}
+                    {student.naukri_url ? (
+                      <a
+                        className="spx-plink"
+                        href={student.naukri_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <ExternalLink size={14} /> Naukri
+                      </a>
+                    ) : (
+                      <span className="spx-plink is-disabled">
+                        <ExternalLink size={14} /> Naukri — Not added
+                      </span>
+                    )}
+                    {student.portfolio_url && (
+                      <a
+                        className="spx-plink"
+                        href={student.portfolio_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <ExternalLink size={14} /> Portfolio
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {tab === 'timeline' && (
+            <div className="spx-section">
+              <div className="spx-section-hdr">
+                <span className="spx-section-title">
+                  <Activity size={16} /> Activity Timeline
+                </span>
+                <span style={{ fontSize: 12, color: '#9CA3AF' }}>{timelineItems.length} events</span>
+              </div>
+              {timelineItems.length === 0 ? (
+                <div style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>
+                  No activity recorded yet — payments, interviews, classes, placements, and batch events will appear here.
+                </div>
+              ) : (
+                <ul className="spx-timeline">
+                  {timelineItems.map((row) => {
+                    const cfg = categoryConfig[row.category]
+                    return (
+                      <li key={row.id} className="spx-timeline-item">
+                        <div className="spx-timeline-dot" style={{ background: cfg.color }} />
+                        <div className="spx-timeline-body">
+                          <div className="spx-timeline-top">
+                            <div className="spx-timeline-title-row">
+                              <strong>{row.title}</strong>
+                              <span className="spx-timeline-badge" style={{ background: `${cfg.color}14`, color: cfg.color, border: `1px solid ${cfg.color}30` }}>
+                                {cfg.label}
+                              </span>
+                            </div>
+                            <div className="spx-timeline-right">
+                              <span className="spx-timeline-date">{row.dateLabel}</span>
+                              {row.viewLink && (
+                                <button
+                                  type="button"
+                                  className="spx-timeline-view-btn"
+                                  onClick={() => navigate(row.viewLink!)}
+                                  title={`View ${cfg.label}`}
+                                >
+                                  <Eye size={13} /> View
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <p className="spx-timeline-sub">{row.sub}</p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Side column */}
+        <div className="spx-col-side">
+          <div className="spx-side-card">
+            <div className="spx-side-title">
+              <Zap size={14} /> Quick Actions
+            </div>
+            {editMode ? (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button
+                  type="button"
+                  className="spx-primary-action"
+                  style={{ margin: 0 }}
+                  onClick={() => void saveEdit()}
+                  disabled={saving}
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  className="spx-action-btn"
+                  style={{ margin: 0, justifyContent: 'center', border: '1px solid #E8E6E1' }}
+                  onClick={cancelEdit}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="spx-primary-action" onClick={openEdit}>
+                <Pencil size={14} /> Edit Details
+              </button>
+            )}
+            <button type="button" className="spx-action-btn" onClick={openPayModal}>
+              <CreditCard size={15} /> Add Payment
+            </button>
+            <button type="button" className="spx-action-btn" onClick={() => void openBatchModal()}>
+              <Users size={15} /> Add to Batch
+            </button>
+            <button type="button" className="spx-action-btn danger" onClick={() => void openRemoveBatchModal()}>
+              <UserMinus size={15} /> Remove from Batch
+            </button>
+            <button type="button" className="spx-action-btn" onClick={() => navigate('/admin/placement')}>
+              <Calendar size={15} /> Schedule Interview
+            </button>
+            <button type="button" className="spx-action-btn" onClick={() => navigate('/admin/placement')}>
+              <Video size={15} /> Schedule Mock Interview
+            </button>
+            <button type="button" className="spx-action-btn" onClick={handleUploadResume}>
+              <Upload size={15} /> Upload Resume
+            </button>
+            <button
+              type="button"
+              className={`spx-action-btn${!hasPhone ? ' disabled' : ''}`}
+              onClick={handleSendWhatsApp}
+              disabled={!hasPhone}
+              title={!hasPhone ? 'No phone number available' : `WhatsApp ${student.phone}`}
+            >
+              <Send size={15} /> Send WhatsApp
+            </button>
+            <button type="button" className="spx-action-btn" onClick={openStageModal}>
+              <TrendingUp size={15} /> Update Stage
+            </button>
+            <button type="button" className="spx-action-btn" onClick={openFeedbackModal}>
+              <MessageSquare size={15} /> Give Feedback
+            </button>
+          </div>
+
+          <div className="spx-side-card">
+            <div className="spx-side-title">
+              <Award size={14} /> Trainer Feedback
+            </div>
+            {latestFeedback ? (
+              <>
+                <div className="spx-feedback-row">
+                  <span className="spx-fb-lbl">Rating</span>
+                  <StarRating
+                    filled={Math.min(3, Math.max(0, latestFeedback.rating))}
+                    total={3}
+                  />
+                </div>
+                <div className="spx-trainer-note">{latestFeedback.notes}</div>
+                <div className="spx-feedback-meta">
+                  <span className="spx-feedback-giver">{latestFeedback.given_by}</span>
+                  {latestFeedback.date && (
+                    <span className="spx-feedback-date">{formatDate(latestFeedback.date)}</span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12, color: '#9CA3AF', padding: '4px 0' }}>No feedback yet.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Add Payment Modal */}
+      {payModalOpen && (
+        <div className="spx-modal-overlay" onClick={() => !paySubmitting && setPayModalOpen(false)}>
+          <div className="spx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="spx-modal-hdr">
+              <h3 className="spx-modal-title">
+                <CreditCard size={18} /> Add Payment
+              </h3>
+              <button
+                type="button"
+                className="spx-modal-close"
+                onClick={() => !paySubmitting && setPayModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="spx-modal-body">
+              {payError && (
+                <div className="spx-modal-error">{payError}</div>
+              )}
+
+              <div className="spx-modal-summary">
+                <div className="spx-modal-summary-item">
+                  <span>Total Fee</span>
+                  <strong>₹{courseFee.toLocaleString('en-IN')}</strong>
+                </div>
+                <div className="spx-modal-summary-item">
+                  <span>Paid Till Now</span>
+                  <strong>₹{amountPaid.toLocaleString('en-IN')}</strong>
+                </div>
+                <div className="spx-modal-summary-item pending">
+                  <span>Pending</span>
+                  <strong>₹{pending.toLocaleString('en-IN')}</strong>
+                </div>
+              </div>
+
+              <div className="spx-modal-fields">
+                <div className="spx-modal-field">
+                  <label className="spx-modal-label">Amount <span className="spx-req">*</span></label>
+                  <div className="spx-input-prefix-wrap">
+                    <span className="spx-input-prefix">₹</span>
+                    <input
+                      className="spx-modal-input spx-input-with-prefix"
+                      type="number"
+                      min="1"
+                      max={pending}
+                      step="0.01"
+                      placeholder="0.00"
+                      value={payForm.amount}
+                      onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
+                      autoFocus
+                    />
+                  </div>
+                  {pending > 0 && (
+                    <span className="spx-modal-hint">Max: ₹{pending.toLocaleString('en-IN')}</span>
+                  )}
+                </div>
+
+                <div className="spx-modal-field">
+                  <label className="spx-modal-label">Payment Date <span className="spx-req">*</span></label>
+                  <input
+                    className="spx-modal-input"
+                    type="date"
+                    value={payForm.paid_on}
+                    onChange={(e) => setPayForm((f) => ({ ...f, paid_on: e.target.value }))}
+                  />
+                </div>
+
+                <div className="spx-modal-field">
+                  <label className="spx-modal-label">Payment Mode</label>
+                  <select
+                    className="spx-modal-input"
+                    value={payForm.payment_mode}
+                    onChange={(e) => setPayForm((f) => ({ ...f, payment_mode: e.target.value }))}
+                  >
+                    <option value="upi">UPI</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="cash">Cash</option>
+                    <option value="card">Card</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div className="spx-modal-field full">
+                  <label className="spx-modal-label">Notes</label>
+                  <textarea
+                    className="spx-modal-input spx-modal-textarea"
+                    rows={2}
+                    placeholder="Optional payment notes..."
+                    value={payForm.notes}
+                    onChange={(e) => setPayForm((f) => ({ ...f, notes: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="spx-modal-footer">
+              <button
+                type="button"
+                className="spx-modal-btn secondary"
+                onClick={() => setPayModalOpen(false)}
+                disabled={paySubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="spx-modal-btn primary"
+                onClick={() => void submitPayment()}
+                disabled={paySubmitting}
+              >
+                {paySubmitting ? 'Processing…' : 'Record Payment'}
               </button>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
+
+      {/* Add to Batch Modal */}
+      {batchModalOpen && (
+        <div className="spx-modal-overlay" onClick={() => !batchSubmitting && setBatchModalOpen(false)}>
+          <div className="spx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="spx-modal-hdr">
+              <h3 className="spx-modal-title"><Users size={18} /> Add to Batch</h3>
+              <button type="button" className="spx-modal-close" onClick={() => !batchSubmitting && setBatchModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="spx-modal-body">
+              {batchError && <div className="spx-modal-error">{batchError}</div>}
+              <div className="spx-search-wrap">
+                <Search size={15} className="spx-search-icon" />
+                <input
+                  className="spx-modal-input spx-search-input"
+                  type="text"
+                  placeholder="Search batches..."
+                  value={batchSearch}
+                  onChange={(e) => setBatchSearch(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="spx-batch-list">
+                {filteredBatches.length === 0 ? (
+                  <div className="spx-batch-empty">No batches found</div>
+                ) : (
+                  filteredBatches.map((b) => {
+                    const alreadyEnrolled = batchHistory.some((bh) => bh.batch_id === b.id && bh.is_active)
+                    const selected = selectedBatchIds.has(b.id)
+                    return (
+                      <label
+                        key={b.id}
+                        className={`spx-batch-row${selected ? ' selected' : ''}${alreadyEnrolled ? ' enrolled' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected || alreadyEnrolled}
+                          disabled={alreadyEnrolled}
+                          onChange={() => toggleBatchSelection(b.id)}
+                        />
+                        <span className="spx-batch-code">{b.batch_code}</span>
+                        {alreadyEnrolled && <span className="spx-batch-tag">Already enrolled</span>}
+                        <span className="spx-batch-status">{humanizeStage(b.status)}</span>
+                      </label>
+                    )
+                  })
+                )}
+              </div>
+              {selectedBatchIds.size > 0 && (
+                <div className="spx-batch-sel-count">{selectedBatchIds.size} batch{selectedBatchIds.size > 1 ? 'es' : ''} selected</div>
+              )}
+            </div>
+            <div className="spx-modal-footer">
+              <button type="button" className="spx-modal-btn secondary" onClick={() => setBatchModalOpen(false)} disabled={batchSubmitting}>
+                Cancel
+              </button>
+              <button type="button" className="spx-modal-btn primary" onClick={() => void submitAddBatch()} disabled={batchSubmitting || selectedBatchIds.size === 0}>
+                {batchSubmitting ? 'Adding…' : 'Enroll in Batch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove from Batch Modal */}
+      {removeBatchModalOpen && (
+        <div className="spx-modal-overlay" onClick={() => !removeBatchSubmitting && setRemoveBatchModalOpen(false)}>
+          <div className="spx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="spx-modal-hdr">
+              <h3 className="spx-modal-title"><UserMinus size={18} /> Remove from Batch</h3>
+              <button type="button" className="spx-modal-close" onClick={() => !removeBatchSubmitting && setRemoveBatchModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="spx-modal-body">
+              {removeBatchError && <div className="spx-modal-error">{removeBatchError}</div>}
+              {activeBatches.length === 0 ? (
+                <div className="spx-batch-empty">Not enrolled in any active batch.</div>
+              ) : (
+                <div className="spx-batch-list">
+                  {activeBatches.map((b) => (
+                    <div key={b.id} className="spx-batch-row spx-remove-row">
+                      <span className="spx-batch-code">{b.batch_code}</span>
+                      <button
+                        type="button"
+                        className="spx-remove-btn"
+                        onClick={() => void removeBatch(b.id)}
+                        disabled={removeBatchSubmitting}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="spx-modal-footer">
+              <button type="button" className="spx-modal-btn secondary" onClick={() => setRemoveBatchModalOpen(false)} disabled={removeBatchSubmitting}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Update Stage Modal */}
+      {stageModalOpen && (
+        <div className="spx-modal-overlay" onClick={() => !stageSubmitting && setStageModalOpen(false)}>
+          <div className="spx-modal spx-modal-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="spx-modal-hdr">
+              <h3 className="spx-modal-title"><TrendingUp size={18} /> Update Stage</h3>
+              <button type="button" className="spx-modal-close" onClick={() => !stageSubmitting && setStageModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="spx-modal-body">
+              {stageError && <div className="spx-modal-error">{stageError}</div>}
+              {student && (
+                <div className="spx-stage-current">
+                  Current stage: <strong>{humanizeStage(student.stage)}</strong>
+                </div>
+              )}
+              <div className="spx-modal-fields" style={{ gridTemplateColumns: '1fr' }}>
+                <div className="spx-modal-field">
+                  <label className="spx-modal-label">New Stage <span className="spx-req">*</span></label>
+                  <select
+                    className="spx-modal-input"
+                    value={stageForm.stage}
+                    onChange={(e) => setStageForm((f) => ({ ...f, stage: e.target.value }))}
+                  >
+                    {stageOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="spx-modal-field">
+                  <label className="spx-modal-label">Notes (optional)</label>
+                  <textarea
+                    className="spx-modal-input spx-modal-textarea"
+                    rows={3}
+                    placeholder="Reason for stage change..."
+                    value={stageForm.notes}
+                    onChange={(e) => setStageForm((f) => ({ ...f, notes: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="spx-modal-footer">
+              <button type="button" className="spx-modal-btn secondary" onClick={() => setStageModalOpen(false)} disabled={stageSubmitting}>
+                Cancel
+              </button>
+              <button type="button" className="spx-modal-btn primary" onClick={() => void submitStageUpdate()} disabled={stageSubmitting}>
+                {stageSubmitting ? 'Updating…' : 'Update Stage'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Give Feedback Modal */}
+      {feedbackModalOpen && (
+        <div className="spx-modal-overlay" onClick={() => !feedbackSubmitting && setFeedbackModalOpen(false)}>
+          <div className="spx-modal spx-modal-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="spx-modal-hdr">
+              <h3 className="spx-modal-title"><MessageSquare size={18} /> Give Feedback</h3>
+              <button type="button" className="spx-modal-close" onClick={() => !feedbackSubmitting && setFeedbackModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="spx-modal-body">
+              {feedbackError && <div className="spx-modal-error">{feedbackError}</div>}
+
+              <div className="spx-feedback-stars-wrap">
+                <label className="spx-modal-label">Rating <span className="spx-req">*</span></label>
+                <div className="spx-feedback-stars">
+                  {[1, 2, 3].map((star) => {
+                    const active = star <= (feedbackForm.hoverRating || feedbackForm.rating)
+                    return (
+                      <button
+                        key={star}
+                        type="button"
+                        className={`spx-star-btn${active ? ' active' : ''}`}
+                        onClick={() => setFeedbackForm((f) => ({ ...f, rating: star }))}
+                        onMouseEnter={() => setFeedbackForm((f) => ({ ...f, hoverRating: star }))}
+                        onMouseLeave={() => setFeedbackForm((f) => ({ ...f, hoverRating: 0 }))}
+                      >
+                        ★
+                      </button>
+                    )
+                  })}
+                  {feedbackForm.rating > 0 && (
+                    <span className={`spx-star-label${feedbackForm.rating === 1 ? ' bad' : feedbackForm.rating === 2 ? ' good' : ' excellent'}`}>
+                      {feedbackForm.rating === 1 ? 'Bad' : feedbackForm.rating === 2 ? 'Good' : 'Excellent'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="spx-modal-field" style={{ marginTop: 16 }}>
+                <label className="spx-modal-label">Feedback Notes <span className="spx-req">*</span></label>
+                <textarea
+                  className="spx-modal-input spx-modal-textarea"
+                  rows={4}
+                  placeholder="Write your feedback about this student..."
+                  value={feedbackForm.notes}
+                  onChange={(e) => setFeedbackForm((f) => ({ ...f, notes: e.target.value }))}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="spx-modal-footer">
+              <button type="button" className="spx-modal-btn secondary" onClick={() => setFeedbackModalOpen(false)} disabled={feedbackSubmitting}>
+                Cancel
+              </button>
+              <button type="button" className="spx-modal-btn primary" onClick={() => void submitFeedback()} disabled={feedbackSubmitting}>
+                {feedbackSubmitting ? 'Submitting…' : 'Submit Feedback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

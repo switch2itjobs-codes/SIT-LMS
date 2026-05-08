@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent, ReactNode } from 'react'
 import {
   Bell,
@@ -25,6 +26,11 @@ import {
   UserCheck,
   Video,
   Star,
+  Activity,
+  UserPlus,
+  TrendingUp,
+  Search,
+  ChevronLeft,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { AdminStudentsPage } from './AdminStudentsPage'
@@ -125,6 +131,8 @@ type StudentInBatch = {
   stage: string
   progress_pct: number | null
   joined_at: string | null
+  trainer_rating: number | null
+  no_of_interviews: number
 }
 
 type AnnouncementRow = {
@@ -241,6 +249,14 @@ const PROGRAM_WEEKS: ProgramWeek[] = [
   },
 ]
 
+type ActivityItem = {
+  id: string
+  type: 'class_completed' | 'class_scheduled' | 'assignment_created' | 'announcement_posted' | 'student_joined'
+  description: string
+  timestamp: string
+  icon: 'check' | 'calendar' | 'clipboard' | 'megaphone' | 'user'
+}
+
 type AssignmentSubmissionType = 'file_upload' | 'text_answer' | 'both'
 
 type BatchAssignmentRow = {
@@ -305,6 +321,32 @@ function formatDateOnly(value: string | null) {
   } catch {
     return value
   }
+}
+
+function formatRelativeTime(iso: string): string {
+  const now = Date.now()
+  const then = new Date(iso).getTime()
+  const diffMs = now - then
+  const absDiff = Math.abs(diffMs)
+  const future = diffMs < 0
+
+  if (absDiff < 60_000) return 'just now'
+  if (absDiff < 3_600_000) {
+    const mins = Math.floor(absDiff / 60_000)
+    return future ? `in ${mins}m` : `${mins}m ago`
+  }
+  if (absDiff < 86_400_000) {
+    const hrs = Math.floor(absDiff / 3_600_000)
+    return future ? `in ${hrs}h` : `${hrs}h ago`
+  }
+  const days = Math.floor(absDiff / 86_400_000)
+  if (days < 7) return future ? `in ${days}d` : `${days}d ago`
+  if (days < 30) {
+    const weeks = Math.floor(days / 7)
+    return future ? `in ${weeks}w` : `${weeks}w ago`
+  }
+  const months = Math.floor(days / 30)
+  return future ? `in ${months}mo` : `${months}mo ago`
 }
 
 function formatMonthShort(iso: string) {
@@ -432,13 +474,7 @@ function SessionRows({
   }, [openMenuSessionId])
 
   if (items.length === 0) {
-    const empty =
-      variant === 'live'
-        ? 'No class is in session right now.'
-        : variant === 'upcoming'
-          ? 'No upcoming live classes.'
-          : 'No past sessions yet.'
-    return <p className="muted-dark batch-empty live-class-card-empty">{empty}</p>
+    return null
   }
 
   return (
@@ -474,7 +510,6 @@ function SessionRows({
                     : `student-classes-table-date weekday-${new Date(s.starts_at).getDay()}`
                 }
               >
-                <span>{new Date(s.starts_at).toLocaleDateString([], { weekday: 'short' })}</span>
                 <strong>{new Date(s.starts_at).getDate()}</strong>
                 <small>{formatMonthShort(s.starts_at)}</small>
               </div>
@@ -657,6 +692,7 @@ export function AdminBatchDetailPage({
 
   const [batch, setBatch] = useState<BatchRecord | null>(null)
   const [sessions, setSessions] = useState<ClassSessionRow[]>([])
+  const [batchStudents, setBatchStudents] = useState<StudentInBatch[]>([])
   const [assignments, setAssignments] = useState<BatchAssignmentRow[]>([])
   const [_assignmentSubmissionCountBySessionId, setAssignmentSubmissionCountBySessionId] =
     useState<Record<string, number>>({})
@@ -666,9 +702,11 @@ export function AdminBatchDetailPage({
     Record<string, number>
   >({})
   const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0)
-  const [submittedAssignmentCount, setSubmittedAssignmentCount] = useState(0)
+  const [, setSubmittedAssignmentCount] = useState(0)
   const [upcomingClassesExpanded, setUpcomingClassesExpanded] = useState(false)
-  const [pastClassesExpanded, setPastClassesExpanded] = useState(false)
+  const [liveSearchQuery, setLiveSearchQuery] = useState('')
+  const [pastClassesPage, setPastClassesPage] = useState(1)
+  const PAST_PAGE_SIZE = 5
   const [assignmentPage, setAssignmentPage] = useState(1)
   const [assignmentSubmissions, setAssignmentSubmissions] = useState<AssignmentSubmissionRow[]>([])
   const [openAssignmentMenuId, setOpenAssignmentMenuId] = useState<string | null>(null)
@@ -892,7 +930,7 @@ export function AdminBatchDetailPage({
           .order('starts_at', { ascending: true }),
         supabase
           .from('student_batches')
-          .select('student_id,joined_at,students(id,student_name,email,stage,progress_pct)')
+          .select('student_id,joined_at,students(id,student_name,email,stage,progress_pct,trainer_rating,no_of_interviews)')
           .eq('batch_id', batchId)
           .eq('is_active', true),
         supabase
@@ -1061,6 +1099,8 @@ export function AdminBatchDetailPage({
               email: string
               stage: string
               progress_pct: number | null
+              trainer_rating: number | null
+              no_of_interviews: number | null
             }
           | {
               id: string
@@ -1068,6 +1108,8 @@ export function AdminBatchDetailPage({
               email: string
               stage: string
               progress_pct: number | null
+              trainer_rating: number | null
+              no_of_interviews: number | null
             }[]
           | null
         const list = Array.isArray(raw) ? raw : raw ? [raw] : []
@@ -1080,6 +1122,8 @@ export function AdminBatchDetailPage({
             stage: s.stage,
             progress_pct: s.progress_pct,
             joined_at: row.joined_at ?? null,
+            trainer_rating: s.trainer_rating ?? null,
+            no_of_interviews: Number(s.no_of_interviews ?? 0),
           })
           if (typeof s.progress_pct === 'number') progressVals.push(s.progress_pct)
         }
@@ -1089,6 +1133,7 @@ export function AdminBatchDetailPage({
           sensitivity: 'base',
         }),
       )
+      setBatchStudents(students)
       setAvgProgress(
         progressVals.length
           ? Math.round(
@@ -1240,23 +1285,31 @@ export function AdminBatchDetailPage({
     const week = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
     return Math.max(1, Math.min(8, week))
   }, [batch?.start_date])
-  const assignmentsCompletedText = useMemo(() => {
-    if (!assignments.length) return '0 / 0'
-    const completed = Math.min(submittedAssignmentCount, assignments.length)
-    return `${completed} / ${assignments.length}`
-  }, [assignments.length, submittedAssignmentCount])
   const attendanceProxy = useMemo(() => {
     const total = liveSessions.length + upcomingSessions.length + pastSessions.length
     if (!total) return 0
     return Math.max(0, Math.min(100, Math.round((pastSessions.length / total) * 100)))
   }, [liveSessions.length, upcomingSessions.length, pastSessions.length])
+  const filteredUpcomingSessions = useMemo(() => {
+    if (!liveSearchQuery.trim()) return upcomingSessions
+    const q = liveSearchQuery.toLowerCase()
+    return upcomingSessions.filter(s => s.title?.toLowerCase().includes(q))
+  }, [upcomingSessions, liveSearchQuery])
+
+  const filteredPastSessions = useMemo(() => {
+    if (!liveSearchQuery.trim()) return pastSessions
+    const q = liveSearchQuery.toLowerCase()
+    return pastSessions.filter(s => s.title?.toLowerCase().includes(q))
+  }, [pastSessions, liveSearchQuery])
+
   const visibleUpcomingSessions = useMemo(
-    () => (upcomingClassesExpanded ? upcomingSessions : upcomingSessions.slice(0, 6)),
-    [upcomingClassesExpanded, upcomingSessions],
+    () => (upcomingClassesExpanded ? filteredUpcomingSessions : filteredUpcomingSessions.slice(0, 6)),
+    [upcomingClassesExpanded, filteredUpcomingSessions],
   )
+  const pastTotalPages = Math.max(1, Math.ceil(filteredPastSessions.length / PAST_PAGE_SIZE))
   const visiblePastSessions = useMemo(
-    () => (pastClassesExpanded ? pastSessions : pastSessions.slice(0, 6)),
-    [pastClassesExpanded, pastSessions],
+    () => filteredPastSessions.slice((pastClassesPage - 1) * PAST_PAGE_SIZE, pastClassesPage * PAST_PAGE_SIZE),
+    [filteredPastSessions, pastClassesPage, PAST_PAGE_SIZE],
   )
   const assignmentRows = useMemo(() => {
     return assignments.map((assignment) => {
@@ -1337,6 +1390,98 @@ export function AdminBatchDetailPage({
           (assignmentCountBySessionId[session.id] ?? 0) === 0,
       ) ?? null,
     [pastSessions, assignmentCountBySessionId],
+  )
+
+  /* ── Batch timeline completion ── */
+  const batchCompletionPct = useMemo(() => {
+    if (!batch?.start_date || !batch?.end_date) return 0
+    const start = new Date(batch.start_date).getTime()
+    const end = new Date(batch.end_date).getTime()
+    const now = Date.now()
+    if (now <= start) return 0
+    if (now >= end) return 100
+    return Math.round(((now - start) / (end - start)) * 100)
+  }, [batch?.start_date, batch?.end_date])
+
+  const batchWeekMilestones = useMemo(() => {
+    if (!batch?.start_date || !batch?.end_date) return []
+    const start = new Date(batch.start_date).getTime()
+    const end = new Date(batch.end_date).getTime()
+    const totalMs = end - start
+    if (totalMs <= 0) return []
+    const weekMs = 7 * 24 * 60 * 60 * 1000
+    const weeks: { week: number; pct: number }[] = []
+    for (let i = 1; i * weekMs < totalMs; i++) {
+      weeks.push({ week: i, pct: Math.round((i * weekMs / totalMs) * 100) })
+    }
+    return weeks
+  }, [batch?.start_date, batch?.end_date])
+
+  /* ── Recent activities feed ── */
+  const recentActivities = useMemo(() => {
+    const items: ActivityItem[] = []
+
+    for (const s of pastSessions) {
+      items.push({
+        id: `class-past-${s.id}`,
+        type: 'class_completed',
+        description: `Class completed: ${s.title}`,
+        timestamp: s.ends_at ?? s.starts_at,
+        icon: 'check',
+      })
+    }
+    for (const s of upcomingSessions) {
+      items.push({
+        id: `class-upcoming-${s.id}`,
+        type: 'class_scheduled',
+        description: `Class scheduled: ${s.title}`,
+        timestamp: s.starts_at,
+        icon: 'calendar',
+      })
+    }
+    for (const a of assignments) {
+      items.push({
+        id: `assignment-${a.id}`,
+        type: 'assignment_created',
+        description: `Assignment created: ${a.title}`,
+        timestamp: a.created_at,
+        icon: 'clipboard',
+      })
+    }
+    for (const ann of announcements) {
+      items.push({
+        id: `announcement-${ann.id}`,
+        type: 'announcement_posted',
+        description: `Announcement: ${ann.title}`,
+        timestamp: ann.published_at,
+        icon: 'megaphone',
+      })
+    }
+    for (const st of batchStudents) {
+      if (st.joined_at) {
+        items.push({
+          id: `student-joined-${st.id}`,
+          type: 'student_joined',
+          description: `${st.student_name} joined the batch`,
+          timestamp: st.joined_at,
+          icon: 'user',
+        })
+      }
+    }
+
+    items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return items.slice(0, 10)
+  }, [pastSessions, upcomingSessions, assignments, announcements, batchStudents])
+
+  /* ── Batch Overview KPI derivations ── */
+  const threeStarStudentCount = useMemo(
+    () => batchStudents.filter(s => s.trainer_rating === 3).length,
+    [batchStudents],
+  )
+
+  const totalInterviewsScheduled = useMemo(
+    () => batchStudents.reduce((sum, s) => sum + s.no_of_interviews, 0),
+    [batchStudents],
   )
 
   const preparePopupWindow = () =>
@@ -1993,11 +2138,7 @@ export function AdminBatchDetailPage({
     return () => document.removeEventListener('mousedown', handleOutside)
   }, [openAssignmentMenuId])
   if (loading) {
-    return (
-      <section className="panel">
-        <p className="muted-dark">Loading batch…</p>
-      </section>
-    )
+    return <SpxLoader label="Loading batch…" />
   }
 
   if (error) {
@@ -2043,6 +2184,21 @@ export function AdminBatchDetailPage({
               {formatDateOnly(batch?.end_date ?? null)}
             </span>
           </p>
+        </div>
+
+        <div className="bd-quick-stats">
+          <div className="bd-quick-stat">
+            <span className="bd-quick-stat-value">{batchStudents.length}</span>
+            <span className="bd-quick-stat-label">Students</span>
+          </div>
+          <div className="bd-quick-stat">
+            <span className="bd-quick-stat-value">{sessions.length}</span>
+            <span className="bd-quick-stat-label">Classes</span>
+          </div>
+          <div className="bd-quick-stat">
+            <span className="bd-quick-stat-value">{batchCompletionPct}%</span>
+            <span className="bd-quick-stat-label">Complete</span>
+          </div>
         </div>
 
         <div className="student-batch-next-card admin-batch-detail-next-card">
@@ -2095,7 +2251,8 @@ export function AdminBatchDetailPage({
           activeTab === 'live-classes' ||
           activeTab === 'overview' ||
           activeTab === 'announcements' ||
-          activeTab === 'community'
+          activeTab === 'community' ||
+          activeTab === 'assignments'
             ? 'batch-detail-panel-plain'
             : activeTab === 'students'
               ? 'batch-detail-panel-students'
@@ -2105,100 +2262,163 @@ export function AdminBatchDetailPage({
       >
         {activeTab === 'overview' && batch ? (
           <section className="admin-overview-v2">
-            <article className="admin-overview-v2-panel">
-              <h3>Today&apos;s Plan</h3>
-              <div className="admin-overview-v2-plan-list">
-                <article className="admin-overview-v2-plan-card is-feedback">
-                  <div>
-                    <p className="admin-overview-v2-plan-label">Feedback Pending</p>
-                    <h4>
-                      {pendingFeedbackCount > 0
-                        ? `${pendingFeedbackCount} Submission${pendingFeedbackCount > 1 ? 's' : ''}`
-                        : 'No Pending Feedback'}
-                    </h4>
-                    <span>
-                      {pendingFeedbackCount > 0
-                        ? 'Submitted assignments are waiting for trainer feedback.'
-                        : 'All submitted assignments are reviewed.'}
-                    </span>
+            {/* ── Batch Progress Timeline (full-width) ── */}
+            <article className="admin-overview-v2-panel bd-progress-timeline">
+              <div className="bd-timeline-header">
+                <h3>Batch Timeline</h3>
+                <span className="bd-timeline-pct-badge">{batchCompletionPct}% complete</span>
+              </div>
+              <div className="bd-timeline-dates">
+                <span><CalendarDays size={12} /> {formatDateOnly(batch.start_date)}</span>
+                <span><CalendarDays size={12} /> {formatDateOnly(batch.end_date)}</span>
+              </div>
+              <div className="bd-timeline-track">
+                <div className="bd-timeline-fill" style={{ width: `${batchCompletionPct}%` }} />
+                {batchCompletionPct > 0 && batchCompletionPct < 100 ? (
+                  <div className="bd-timeline-marker" style={{ left: `${batchCompletionPct}%` }}>
+                    <span className="bd-timeline-marker-label">Today</span>
                   </div>
-                  <button
-                    type="button"
-                    className="admin-overview-v2-plan-btn is-feedback"
-                    onClick={() => {
-                      setActiveTab('assignments')
-                      onTabChange?.('assignments')
-                    }}
-                  >
-                    Review
-                  </button>
-                </article>
-
-                <article className="admin-overview-v2-plan-card is-prepare">
-                  <div>
-                    <p className="admin-overview-v2-plan-label">Preparation</p>
-                    <h4>
-                      {nextPlannedClass
-                        ? `Prepare: ${nextPlannedClass.title}`
-                        : 'No upcoming class scheduled'}
-                    </h4>
-                    <span>
-                      {nextPlannedClass
-                        ? formatSessionTimeRange(nextPlannedClass.starts_at, nextPlannedClass.ends_at)
-                        : 'Create a class schedule for this batch.'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="admin-overview-v2-plan-btn is-prepare"
-                    onClick={() => {
-                      setActiveTab('live-classes')
-                      onTabChange?.('live-classes')
-                    }}
-                  >
-                    View
-                  </button>
-                </article>
-
-                {recentlyCompletedWithoutAssignment ? (
-                  <article className="admin-overview-v2-plan-card is-assignment">
-                    <div>
-                      <p className="admin-overview-v2-plan-label">Assignment Action</p>
-                      <h4>Add assignment for completed class</h4>
-                      <span>{recentlyCompletedWithoutAssignment.title}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="admin-overview-v2-plan-btn is-assignment"
-                      onClick={() =>
-                        handleAddAssignmentToSession(recentlyCompletedWithoutAssignment)
-                      }
-                    >
-                      Add Assignment
-                    </button>
-                  </article>
                 ) : null}
+                {batchWeekMilestones.map((m) => (
+                  <div key={m.week} className="bd-timeline-week-tick" style={{ left: `${m.pct}%` }}>
+                    <span>W{m.week}</span>
+                  </div>
+                ))}
               </div>
             </article>
 
-            <article className="admin-overview-v2-panel">
-              <h3>Batch Overview</h3>
-              <div className="admin-overview-v2-kpi-grid">
-                <article className="admin-overview-v2-kpi is-progress">
-                  <p>Overall Progress</p>
-                  <h4>{avgProgress === null ? '—' : `${avgProgress}%`}</h4>
-                  <span>You&apos;re on track for completion</span>
-                </article>
-                <article className="admin-overview-v2-kpi is-assignments">
-                  <p>Assignments Completed</p>
-                  <h4>{assignmentsCompletedText}</h4>
-                  <span>Submission consistency</span>
-                </article>
-                <article className="admin-overview-v2-kpi is-attendance">
-                  <p>Attendance</p>
-                  <h4>{attendanceProxy}%</h4>
-                  <span>Based on classes completed</span>
-                </article>
+            {/* ── Left column: Today's Plan + KPIs ── */}
+            <div className="bd-overview-left">
+              <article className="admin-overview-v2-panel">
+                <h3>Today&apos;s Plan</h3>
+                <div className="admin-overview-v2-plan-list">
+                  <article className="admin-overview-v2-plan-card is-feedback">
+                    <div>
+                      <p className="admin-overview-v2-plan-label">Feedback Pending</p>
+                      <h4>
+                        {pendingFeedbackCount > 0
+                          ? `${pendingFeedbackCount} Submission${pendingFeedbackCount > 1 ? 's' : ''}`
+                          : 'No Pending Feedback'}
+                      </h4>
+                      <span>
+                        {pendingFeedbackCount > 0
+                          ? 'Submitted assignments are waiting for trainer feedback.'
+                          : 'All submitted assignments are reviewed.'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="admin-overview-v2-plan-btn is-feedback"
+                      onClick={() => {
+                        setActiveTab('assignments')
+                        onTabChange?.('assignments')
+                      }}
+                    >
+                      Review
+                    </button>
+                  </article>
+
+                  <article className="admin-overview-v2-plan-card is-prepare">
+                    <div>
+                      <p className="admin-overview-v2-plan-label">Preparation</p>
+                      <h4>
+                        {nextPlannedClass
+                          ? `Prepare: ${nextPlannedClass.title}`
+                          : 'No upcoming class scheduled'}
+                      </h4>
+                      <span>
+                        {nextPlannedClass
+                          ? formatSessionTimeRange(nextPlannedClass.starts_at, nextPlannedClass.ends_at)
+                          : 'Create a class schedule for this batch.'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="admin-overview-v2-plan-btn is-prepare"
+                      onClick={() => {
+                        setActiveTab('live-classes')
+                        onTabChange?.('live-classes')
+                      }}
+                    >
+                      View
+                    </button>
+                  </article>
+
+                  {recentlyCompletedWithoutAssignment ? (
+                    <article className="admin-overview-v2-plan-card is-assignment">
+                      <div>
+                        <p className="admin-overview-v2-plan-label">Assignment Action</p>
+                        <h4>Add assignment for completed class</h4>
+                        <span>{recentlyCompletedWithoutAssignment.title}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="admin-overview-v2-plan-btn is-assignment"
+                        onClick={() =>
+                          handleAddAssignmentToSession(recentlyCompletedWithoutAssignment)
+                        }
+                      >
+                        Add Assignment
+                      </button>
+                    </article>
+                  ) : null}
+                </div>
+              </article>
+
+              <article className="admin-overview-v2-panel">
+                <h3>Batch Overview</h3>
+                <div className="admin-overview-v2-kpi-grid bd-kpi-grid-2x2">
+                  <article className="admin-overview-v2-kpi is-stars">
+                    <div className="bd-kpi-icon-wrap is-stars"><Star size={18} /></div>
+                    <p>3-Star Students</p>
+                    <h4>{threeStarStudentCount}</h4>
+                    <span>Out of {batchStudents.length} enrolled</span>
+                  </article>
+                  <article className="admin-overview-v2-kpi is-interviews">
+                    <div className="bd-kpi-icon-wrap is-interviews"><Briefcase size={18} /></div>
+                    <p>Interview Calls</p>
+                    <h4>{totalInterviewsScheduled}</h4>
+                    <span>Scheduled across batch</span>
+                  </article>
+                  <article className="admin-overview-v2-kpi is-attendance">
+                    <div className="bd-kpi-icon-wrap is-attendance"><UserCheck size={18} /></div>
+                    <p>Attendance</p>
+                    <h4>{attendanceProxy}%</h4>
+                    <span>Based on classes completed</span>
+                  </article>
+                  <article className="admin-overview-v2-kpi is-progress">
+                    <div className="bd-kpi-icon-wrap is-progress"><TrendingUp size={18} /></div>
+                    <p>Overall Progress</p>
+                    <h4>{avgProgress === null ? '—' : `${avgProgress}%`}</h4>
+                    <span>Average across students</span>
+                  </article>
+                </div>
+              </article>
+            </div>
+
+            {/* ── Right column: Recent Activity (full height) ── */}
+            <article className="admin-overview-v2-panel bd-activities-panel">
+              <h3><Activity size={16} /> Recent Activity</h3>
+              <div className="bd-activity-feed">
+                {recentActivities.length === 0 ? (
+                  <p className="bd-activity-empty">No recent activity in this batch</p>
+                ) : (
+                  recentActivities.map((activity) => (
+                    <div key={activity.id} className={`bd-activity-item is-${activity.type}`}>
+                      <div className="bd-activity-dot">
+                        {activity.icon === 'check' && <CheckCircle2 size={14} />}
+                        {activity.icon === 'calendar' && <CalendarDays size={14} />}
+                        {activity.icon === 'clipboard' && <ClipboardList size={14} />}
+                        {activity.icon === 'megaphone' && <Megaphone size={14} />}
+                        {activity.icon === 'user' && <UserPlus size={14} />}
+                      </div>
+                      <div className="bd-activity-content">
+                        <p className="bd-activity-desc">{activity.description}</p>
+                        <span className="bd-activity-time">{formatRelativeTime(activity.timestamp)}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </article>
           </section>
@@ -2206,75 +2426,116 @@ export function AdminBatchDetailPage({
 
         {activeTab === 'live-classes' ? (
           <div className="student-classes-table-wrap">
-            <div className="live-classes-toolbar">
-              <div />
+            {/* ── Header toolbar ── */}
+            <div className="lc-header">
+              <div className="lc-search-wrap">
+                <Search size={15} className="lc-search-icon" />
+                <input
+                  type="text"
+                  className="lc-search-input"
+                  placeholder="Search classes..."
+                  value={liveSearchQuery}
+                  onChange={(e) => { setLiveSearchQuery(e.target.value); setPastClassesPage(1) }}
+                />
+              </div>
               <button
                 type="button"
                 className="schedule-class-btn"
                 onClick={() => openScheduleForNew(true)}
               >
-                Schedule Class
+                <CalendarDays size={14} /> Schedule Class
               </button>
             </div>
-            <div className="student-classes-section-head">
-              <h4><Clock3 size={16} /> Upcoming Classes</h4>
-              <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
-                {upcomingClassesExpanded ? 'Show Less' : 'View All'}
-              </button>
-            </div>
-            <article className="student-classes-table-card is-upcoming-table">
-              <table className="student-classes-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Topic</th>
-                    <th>Attachments</th>
-                    <th>Time</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <SessionRows
-                  items={visibleUpcomingSessions}
-                  variant="upcoming"
-                  onStart={handleStartSession}
-                  onOpenRecording={handleOpenRecording}
-                  onReport={handleViewReport}
-                  assignmentCountBySessionId={assignmentCountBySessionId}
-                  attendanceCountBySessionId={attendanceCountBySessionId}
-                  assignmentsBySessionId={assignmentsBySessionId}
-                  pendingFeedbackBySessionId={pendingFeedbackBySessionId}
-                  onEditSession={handleEditSession}
-                  onAddAssignment={handleAddAssignmentToSession}
-                  onViewAssignmentReports={handleViewAssignmentReportsForSession}
-                  onCopyJoinUrl={handleCopyJoinUrl}
-                  onDeleteSession={handleDeleteSession}
-                  onOpenClassDetail={(session) => onOpenClassDetail?.(session.id)}
-                  loadingMeetingId={actionBusyMeetingId}
-                />
-              </table>
-              <div className="student-classes-table-foot">
-                <p>
-                  Showing {Math.min(visibleUpcomingSessions.length, 6)} of {upcomingSessions.length} classes
-                </p>
-                <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
-                  {upcomingClassesExpanded ? 'Show Less' : 'View All'}
-                </button>
-              </div>
-            </article>
 
+            {/* ── Upcoming Classes ── */}
             <div className="student-classes-section-head">
+              <h4><CalendarDays size={16} /> Upcoming Classes</h4>
+            </div>
+            {filteredUpcomingSessions.length === 0 ? (
+              <article className="student-classes-table-card is-upcoming-table">
+                <table className="student-classes-table lc-upcoming-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Topic</th>
+                      <th>Time</th>
+                      <th>Duration</th>
+                      <th>Trainer</th>
+                      <th>Attachments</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                </table>
+                <div className="lc-empty-state">
+                  <div className="lc-empty-icon">
+                    <CalendarDays size={32} />
+                  </div>
+                  <p className="lc-empty-title">No upcoming live classes</p>
+                  <p className="lc-empty-desc">Schedule a class to get started.</p>
+                  <button
+                    type="button"
+                    className="lc-empty-cta"
+                    onClick={() => openScheduleForNew(true)}
+                  >
+                    Schedule Your First Class
+                  </button>
+                </div>
+              </article>
+            ) : (
+              <article className="student-classes-table-card is-upcoming-table">
+                <table className="student-classes-table lc-upcoming-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Topic</th>
+                      <th>Attachments</th>
+                      <th>Time</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <SessionRows
+                    items={visibleUpcomingSessions}
+                    variant="upcoming"
+                    onStart={handleStartSession}
+                    onOpenRecording={handleOpenRecording}
+                    onReport={handleViewReport}
+                    assignmentCountBySessionId={assignmentCountBySessionId}
+                    attendanceCountBySessionId={attendanceCountBySessionId}
+                    assignmentsBySessionId={assignmentsBySessionId}
+                    pendingFeedbackBySessionId={pendingFeedbackBySessionId}
+                    onEditSession={handleEditSession}
+                    onAddAssignment={handleAddAssignmentToSession}
+                    onViewAssignmentReports={handleViewAssignmentReportsForSession}
+                    onCopyJoinUrl={handleCopyJoinUrl}
+                    onDeleteSession={handleDeleteSession}
+                    onOpenClassDetail={(session) => onOpenClassDetail?.(session.id)}
+                    loadingMeetingId={actionBusyMeetingId}
+                  />
+                </table>
+                {filteredUpcomingSessions.length > 6 ? (
+                  <div className="student-classes-table-foot">
+                    <p>
+                      Showing {Math.min(visibleUpcomingSessions.length, 6)} of {filteredUpcomingSessions.length} classes
+                    </p>
+                    <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
+                      {upcomingClassesExpanded ? 'Show Less' : 'View All'}
+                    </button>
+                  </div>
+                ) : null}
+              </article>
+            )}
+
+            {/* ── Past Classes ── */}
+            <div className="student-classes-section-head lc-past-section-head">
               <h4><Clock3 size={16} /> Past Classes</h4>
-              <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
-                {pastClassesExpanded ? 'Show Less' : 'View All'}
-              </button>
             </div>
             <article className="student-classes-table-card is-past-table">
-              <table className="student-classes-table past-table">
+              <table className="student-classes-table past-table lc-past-table">
                 <thead>
                   <tr>
                     <th>Date</th>
                     <th>Topic</th>
-                    <th>Status of the class</th>
+                    <th>Status</th>
                     <th>Attendance</th>
                     <th>Attachments</th>
                     <th>Actions</th>
@@ -2299,14 +2560,41 @@ export function AdminBatchDetailPage({
                   loadingMeetingId={actionBusyMeetingId}
                 />
               </table>
-              <div className="student-classes-table-foot">
-                <p>
-                  Showing {Math.min(visiblePastSessions.length, 6)} of {pastSessions.length} classes
-                </p>
-                <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
-                  {pastClassesExpanded ? 'Show Less' : 'View All'}
-                </button>
-              </div>
+              {filteredPastSessions.length > 0 ? (
+                <div className="student-classes-table-foot lc-pagination-foot">
+                  <p>
+                    Showing {((pastClassesPage - 1) * PAST_PAGE_SIZE) + 1} to {Math.min(pastClassesPage * PAST_PAGE_SIZE, filteredPastSessions.length)} of {filteredPastSessions.length} classes
+                  </p>
+                  <div className="lc-pagination">
+                    <button
+                      type="button"
+                      className="lc-page-btn"
+                      disabled={pastClassesPage <= 1}
+                      onClick={() => setPastClassesPage(p => p - 1)}
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    {Array.from({ length: pastTotalPages }, (_, i) => i + 1).map(pg => (
+                      <button
+                        key={pg}
+                        type="button"
+                        className={`lc-page-btn ${pg === pastClassesPage ? 'is-active' : ''}`}
+                        onClick={() => setPastClassesPage(pg)}
+                      >
+                        {pg}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="lc-page-btn"
+                      disabled={pastClassesPage >= pastTotalPages}
+                      onClick={() => setPastClassesPage(p => p + 1)}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </article>
 
             {liveActionError ? (
@@ -2875,33 +3163,32 @@ export function AdminBatchDetailPage({
                       })}
                     </tbody>
                   </table>
-                </div>
-
-                <div className="student-assignments-footer">
-                  <p>
-                    Showing {assignmentRows.length ? (assignmentPage - 1) * assignmentPageSize + 1 : 0} to{' '}
-                    {Math.min(assignmentPage * assignmentPageSize, assignmentRows.length)} of {assignmentRows.length} assignments
-                  </p>
-                  <div className="student-assignments-pagination">
-                    <button
-                      type="button"
-                      disabled={assignmentPage <= 1}
-                      onClick={() => setAssignmentPage((prev) => Math.max(1, prev - 1))}
-                    >
-                      {'<'}
-                    </button>
-                    <button type="button" className="active">
-                      {assignmentPage}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={assignmentPage >= assignmentTotalPages}
-                      onClick={() =>
-                        setAssignmentPage((prev) => Math.min(assignmentTotalPages, prev + 1))
-                      }
-                    >
-                      {'>'}
-                    </button>
+                  <div className="student-assignments-footer">
+                    <p>
+                      Showing {assignmentRows.length ? (assignmentPage - 1) * assignmentPageSize + 1 : 0} to{' '}
+                      {Math.min(assignmentPage * assignmentPageSize, assignmentRows.length)} of {assignmentRows.length} assignments
+                    </p>
+                    <div className="student-assignments-pagination">
+                      <button
+                        type="button"
+                        disabled={assignmentPage <= 1}
+                        onClick={() => setAssignmentPage((prev) => Math.max(1, prev - 1))}
+                      >
+                        {'<'}
+                      </button>
+                      <button type="button" className="active">
+                        {assignmentPage}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={assignmentPage >= assignmentTotalPages}
+                        onClick={() =>
+                          setAssignmentPage((prev) => Math.min(assignmentTotalPages, prev + 1))
+                        }
+                      >
+                        {'>'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </>

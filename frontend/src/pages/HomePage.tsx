@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { Session } from '@supabase/supabase-js'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -9,6 +10,7 @@ import {
   CalendarRange,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   Clock3,
@@ -36,8 +38,12 @@ import {
   User,
   Users,
   TrendingUp,
+  Pencil,
+  Mail,
+  Phone,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { getBackendOrigin } from '../lib/backendOrigin'
 import { getJoinUrl } from '../lib/zoomApi'
 import { BatchCommunityChat } from '../components/BatchCommunityChat/BatchCommunityChat'
 
@@ -218,17 +224,26 @@ export function HomePage({ session }: HomePageProps) {
   const [myBatches, setMyBatches] = useState<BatchItem[]>([])
   const [assignments, setAssignments] = useState<AssignmentItem[]>([])
   const [assignmentSubmissions, setAssignmentSubmissions] = useState<AssignmentSubmissionItem[]>([])
+  const [attendanceRecords, setAttendanceRecords] = useState<{ class_session_id: string; status: string }[]>([])
   const [announcementReactions, setAnnouncementReactions] = useState<AnnouncementReactionItem[]>([])
   const [previousClassesPage, setPreviousClassesPage] = useState(1)
-  const [batchesOpen, setBatchesOpen] = useState(false)
+  const [allSystemBatches, setAllSystemBatches] = useState<BatchItem[]>([])
+  const [batchesTab, setBatchesTab] = useState<'enrolled' | 'all'>('enrolled')
+  const [enrollingBatchId, setEnrollingBatchId] = useState<string | null>(null)
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null)
-  const [studentView, setStudentView] = useState<'dashboard' | 'batch-detail'>('dashboard')
+  const [studentView, setStudentView] = useState<'dashboard' | 'batches-list' | 'batch-detail' | 'my-classes' | 'my-assignments' | 'my-announcements' | 'my-profile'>('dashboard')
   const [batchDetailTab, setBatchDetailTab] = useState<BatchDetailTab>(
     userRole === 'student' ? 'overview' : 'community',
   )
   const [expandedScheduleWeeks, setExpandedScheduleWeeks] = useState<number[]>([1, 2, 3, 4])
-  const [upcomingClassesExpanded, setUpcomingClassesExpanded] = useState(false)
-  const [pastClassesExpanded, setPastClassesExpanded] = useState(false)
+  const [pastClassesPage, setPastClassesPage] = useState(1)
+  const PAST_CLASSES_PAGE_SIZE = 6
+  const [myClassesTab, setMyClassesTab] = useState<'upcoming' | 'past'>('upcoming')
+  const [myClassesPage, setMyClassesPage] = useState(1)
+  const MY_CLASSES_PAGE_SIZE = 8
+  const [myAssignmentsTab, setMyAssignmentsTab] = useState<'all' | 'pending' | 'completed'>('all')
+  const [myAssignmentsPage, setMyAssignmentsPage] = useState(1)
+  const MY_ASSIGNMENTS_PAGE_SIZE = 8
   const [assignmentPage, setAssignmentPage] = useState(1)
   const [assignmentDrawerOpen, setAssignmentDrawerOpen] = useState(false)
   const [assignmentDrawerMode, setAssignmentDrawerMode] = useState<AssignmentDrawerMode>('submit')
@@ -237,6 +252,21 @@ export function HomePage({ session }: HomePageProps) {
   const [submissionText, setSubmissionText] = useState('')
   const [submissionFile, setSubmissionFile] = useState<File | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [profileData, setProfileData] = useState<{
+    student_name: string; email: string; phone: string | null; gender: string | null;
+    location: string | null; degree: string | null; previous_company: string | null;
+    previous_job_role: string | null; experience_years: number | null; domain: string | null;
+    enrollment_date: string | null; resume_url: string | null; linkedin_url: string | null;
+    naukri_url: string | null; portfolio_url: string | null; stage: string;
+    attendance_pct: number | null; progress_pct: number | null; avatar_url: string | null;
+  } | null>(null)
+  const [profileEditMode, setProfileEditMode] = useState(false)
+  const [profileEditForm, setProfileEditForm] = useState<Record<string, string>>({})
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [resumeUploading, setResumeUploading] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement | null>(null)
+  const resumeInputRef = useRef<HTMLInputElement | null>(null)
   const [assignmentSubmitError, setAssignmentSubmitError] = useState('')
   const [assignmentSubmitSuccess, setAssignmentSubmitSuccess] = useState('')
   const [joinBusyMeetingId, setJoinBusyMeetingId] = useState<string | null>(null)
@@ -513,6 +543,18 @@ export function HomePage({ session }: HomePageProps) {
         setAssignmentSubmissions([])
       }
 
+      // Fetch attendance records for this student
+      if (classItems.length) {
+        const { data: attendRows } = await supabase
+          .from('class_attendance')
+          .select('class_session_id,status')
+          .eq('student_id', student.id)
+          .in('class_session_id', classItems.map(c => c.id))
+        setAttendanceRecords((attendRows ?? []) as { class_session_id: string; status: string }[])
+      } else {
+        setAttendanceRecords([])
+      }
+
       setLoading(false)
     }
 
@@ -529,8 +571,272 @@ export function HomePage({ session }: HomePageProps) {
       setBatchDetailTab((match[2] as BatchDetailTab | undefined) ?? (userRole === 'student' ? 'overview' : 'community'))
       return
     }
+    if (/^\/home\/batches\/?$/.test(location.pathname)) {
+      setStudentView('batches-list')
+      return
+    }
+    if (/^\/home\/classes\/?$/.test(location.pathname)) {
+      setStudentView('my-classes')
+      return
+    }
+    if (/^\/home\/assignments\/?$/.test(location.pathname)) {
+      setStudentView('my-assignments')
+      return
+    }
+    if (/^\/home\/announcements\/?$/.test(location.pathname)) {
+      setStudentView('my-announcements')
+      return
+    }
+    if (/^\/home\/profile\/?$/.test(location.pathname)) {
+      setStudentView('my-profile')
+      return
+    }
     setStudentView('dashboard')
   }, [location.pathname, userRole])
+
+  // Fetch all batches when batches-list is active
+  useEffect(() => {
+    if (studentView !== 'batches-list') return
+    const fetchAllBatches = async () => {
+      const { data: allBatchRows, error: allBatchErr } = await supabase
+        .from('batches')
+        .select('id,batch_code,status,batch_type,trainer_id,start_date,end_date')
+        .order('start_date', { ascending: false })
+      if (allBatchErr) {
+        console.error('Failed to fetch all batches:', allBatchErr.message)
+      }
+      if (!allBatchRows || !allBatchRows.length) {
+        console.warn('All batches query returned empty. Rows:', allBatchRows, 'Error:', allBatchErr)
+        return
+      }
+
+      const trainerIds = Array.from(
+        new Set(
+          allBatchRows
+            .map((b) => b.trainer_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      )
+      const { data: trainerRows } = trainerIds.length
+        ? await supabase.from('trainers').select('id,trainer_name').in('id', trainerIds)
+        : { data: [] as Array<{ id: string; trainer_name: string }> }
+      const trainerMap = new Map((trainerRows ?? []).map((t) => [t.id, t.trainer_name]))
+
+      setAllSystemBatches(
+        allBatchRows.map((b) => ({
+          id: b.id,
+          batch_code: b.batch_code,
+          status: b.status,
+          batch_type: b.batch_type,
+          trainer_name: trainerMap.get(b.trainer_id ?? '') ?? 'No trainer',
+          start_date: b.start_date,
+          end_date: b.end_date,
+        })),
+      )
+    }
+    void fetchAllBatches()
+  }, [studentView])
+
+  // Fetch profile data when my-profile view is active
+  useEffect(() => {
+    if (studentView !== 'my-profile' || !studentId) return
+    const fetchProfile = async () => {
+      const { data } = await supabase
+        .from('students')
+        .select('student_name,email,phone,gender,location,degree,previous_company,previous_job_role,experience_years,domain,enrollment_date,resume_url,linkedin_url,naukri_url,portfolio_url,stage,attendance_pct,progress_pct,avatar_url')
+        .eq('id', studentId)
+        .single()
+      if (data) setProfileData(data as typeof profileData)
+    }
+    void fetchProfile()
+  }, [studentView, studentId])
+
+  const openProfileEdit = () => {
+    if (!profileData) return
+    const form: Record<string, string> = {}
+    const keys = ['student_name','email','phone','gender','location','degree','previous_company','previous_job_role','experience_years','domain','linkedin_url','resume_url','naukri_url','portfolio_url'] as const
+    for (const k of keys) {
+      form[k] = profileData[k] != null ? String(profileData[k]) : ''
+    }
+    setProfileEditForm(form)
+    setProfileEditMode(true)
+  }
+
+  const saveProfile = async () => {
+    if (!studentId) return
+    setProfileSaving(true)
+    const updates: Record<string, string | number | null> = {}
+    for (const [k, v] of Object.entries(profileEditForm)) {
+      if (k === 'experience_years') {
+        updates[k] = v !== '' ? Number(v) : null
+      } else {
+        updates[k] = v !== '' ? v : null
+      }
+    }
+    await supabase.from('students').update(updates).eq('id', studentId)
+    // Refresh profile data
+    const { data } = await supabase
+      .from('students')
+      .select('student_name,email,phone,gender,location,degree,previous_company,previous_job_role,experience_years,domain,enrollment_date,resume_url,linkedin_url,naukri_url,portfolio_url,stage,attendance_pct,progress_pct,avatar_url')
+      .eq('id', studentId)
+      .single()
+    if (data) setProfileData(data as typeof profileData)
+    setProfileEditMode(false)
+    setProfileSaving(false)
+  }
+
+  /* ── Avatar upload handler ── */
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { alert('Only JPG, PNG, or WebP images are allowed.'); return }
+    if (file.size > 2 * 1024 * 1024) { alert('Image must be less than 2 MB.'); return }
+    setAvatarUploading(true)
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession()
+      if (!s?.access_token) { alert('Not authenticated.'); return }
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${getBackendOrigin()}/api/student/profile/avatar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${s.access_token}` },
+        body: fd,
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string; avatar_url?: string }
+      if (!res.ok) { alert(body.error ?? 'Avatar upload failed.'); return }
+      if (body.avatar_url && profileData) {
+        setProfileData({ ...profileData, avatar_url: body.avatar_url })
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Avatar upload failed.')
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
+
+  /* ── Resume upload handler ── */
+  const handleResumeSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setResumeUploading(true)
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession()
+      if (!s?.access_token) { alert('Not authenticated.'); return }
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${getBackendOrigin()}/api/student/profile/resume`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${s.access_token}` },
+        body: fd,
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string; resume_url?: string }
+      if (!res.ok) { alert(body.error ?? 'Resume upload failed.'); return }
+      if (body.resume_url && profileData) {
+        setProfileData({ ...profileData, resume_url: body.resume_url })
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Resume upload failed.')
+    } finally {
+      setResumeUploading(false)
+    }
+  }
+
+  const renderProfileField = (label: string, key: string, type?: string, options?: string[]) => {
+    if (profileEditMode) {
+      if (type === 'select' && options) {
+        return (
+          <div key={key}>
+            <div className="spx-field-lbl">{label}</div>
+            <select
+              className="spx-field-val"
+              style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #D1D5DB', fontSize: 13 }}
+              value={profileEditForm[key] ?? ''}
+              onChange={e => setProfileEditForm(prev => ({ ...prev, [key]: e.target.value }))}
+            >
+              <option value="">—</option>
+              {options.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        )
+      }
+      return (
+        <div key={key}>
+          <div className="spx-field-lbl">{label}</div>
+          <input
+            type={type || 'text'}
+            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #D1D5DB', fontSize: 13 }}
+            value={profileEditForm[key] ?? ''}
+            onChange={e => setProfileEditForm(prev => ({ ...prev, [key]: e.target.value }))}
+          />
+        </div>
+      )
+    }
+    const raw = profileData?.[key as keyof typeof profileData]
+    const val = raw != null ? String(raw) : '—'
+    if (type === 'url' && val !== '—') {
+      return (
+        <div key={key}>
+          <div className="spx-field-lbl">{label}</div>
+          <div className="spx-field-val"><a href={val} target="_blank" rel="noreferrer" style={{ color: '#6366F1', textDecoration: 'underline' }}>{val}</a></div>
+        </div>
+      )
+    }
+    return (
+      <div key={key}>
+        <div className="spx-field-lbl">{label}</div>
+        <div className="spx-field-val">{val}</div>
+      </div>
+    )
+  }
+
+  const handleEnroll = async (batchId: string) => {
+    if (!studentId) return
+    setEnrollingBatchId(batchId)
+    try {
+      const { error: enrollError } = await supabase
+        .from('student_batches')
+        .insert({ student_id: studentId, batch_id: batchId, is_active: true })
+      if (enrollError) {
+        console.error('Enroll error:', enrollError.message)
+        setEnrollingBatchId(null)
+        return
+      }
+      // Add to enrolled list
+      const enrolled = allSystemBatches.find((b) => b.id === batchId)
+      if (enrolled) {
+        setMyBatches((prev) => [...prev, enrolled])
+      }
+    } finally {
+      setEnrollingBatchId(null)
+    }
+  }
+
+  const enrolledBatchIds = useMemo(() => new Set(myBatches.map((b) => b.id)), [myBatches])
+  const unenrolledBatches = useMemo(
+    () => allSystemBatches.filter((b) => !enrolledBatchIds.has(b.id)),
+    [allSystemBatches, enrolledBatchIds],
+  )
+
+  // ── My Classes page: all classes across all batches ──
+  const allUpcomingClasses = useMemo(
+    () => allClasses.filter((c) => new Date(c.starts_at).getTime() > Date.now() && c.zoom_status !== 'started')
+      .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()),
+    [allClasses],
+  )
+  const allPastClasses = useMemo(
+    () => allClasses.filter((c) => new Date(c.starts_at).getTime() <= Date.now() || c.zoom_status === 'started')
+      .filter((c) => c.zoom_status !== 'started')
+      .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime()),
+    [allClasses],
+  )
+  const myClassesSource = myClassesTab === 'upcoming' ? allUpcomingClasses : allPastClasses
+  const myClassesTotalPages = Math.max(1, Math.ceil(myClassesSource.length / MY_CLASSES_PAGE_SIZE))
+  const myClassesPageRows = useMemo(
+    () => myClassesSource.slice((myClassesPage - 1) * MY_CLASSES_PAGE_SIZE, myClassesPage * MY_CLASSES_PAGE_SIZE),
+    [myClassesSource, myClassesPage, MY_CLASSES_PAGE_SIZE],
+  )
 
   const getSessionStatus = (item: ClassSessionItem): SessionStatus => {
     if (item.zoom_status === 'started') {
@@ -555,6 +861,49 @@ export function HomePage({ session }: HomePageProps) {
     () => new Map(assignmentSubmissions.map((item) => [item.assignment_id, item])),
     [assignmentSubmissions],
   )
+
+  // ── My Assignments page: all assignments across all batches ──
+  const batchCodeById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const b of myBatches) map.set(b.id, b.batch_code)
+    return map
+  }, [myBatches])
+
+  const allAssignmentRows = useMemo(() => {
+    const sorted = [...assignments].sort(
+      (a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime(),
+    )
+    return sorted.map((item) => {
+      const submission = submissionByAssignmentId.get(item.id)
+      const hasSubmission = Boolean(submission?.submitted_at)
+      const hasMarks = submission?.marks !== null && submission?.marks !== undefined
+      const hasFeedback = Boolean(submission?.feedback)
+      const overdue = !hasSubmission && new Date(item.due_at).getTime() < Date.now()
+      let status: AssignmentTableStatus = 'pending'
+      if (overdue) status = 'overdue'
+      else if (hasMarks || hasFeedback) status = 'evaluated'
+      else if (hasSubmission) status = 'under-evaluation'
+      return { item, submission, status }
+    })
+  }, [assignments, submissionByAssignmentId])
+
+  const myAssignmentsFiltered = useMemo(() => {
+    if (myAssignmentsTab === 'pending') return allAssignmentRows.filter((r) => r.status === 'pending' || r.status === 'overdue')
+    if (myAssignmentsTab === 'completed') return allAssignmentRows.filter((r) => r.status === 'evaluated' || r.status === 'under-evaluation')
+    return allAssignmentRows
+  }, [allAssignmentRows, myAssignmentsTab])
+
+  const myAssignmentsTotalPages = Math.max(1, Math.ceil(myAssignmentsFiltered.length / MY_ASSIGNMENTS_PAGE_SIZE))
+  const myAssignmentsPageRows = useMemo(
+    () => myAssignmentsFiltered.slice((myAssignmentsPage - 1) * MY_ASSIGNMENTS_PAGE_SIZE, myAssignmentsPage * MY_ASSIGNMENTS_PAGE_SIZE),
+    [myAssignmentsFiltered, myAssignmentsPage, MY_ASSIGNMENTS_PAGE_SIZE],
+  )
+
+  const myAssignmentsCounts = useMemo(() => ({
+    all: allAssignmentRows.length,
+    pending: allAssignmentRows.filter((r) => r.status === 'pending' || r.status === 'overdue').length,
+    completed: allAssignmentRows.filter((r) => r.status === 'evaluated' || r.status === 'under-evaluation').length,
+  }), [allAssignmentRows])
 
   const liveNowClasses = useMemo(
     () => allClasses.filter((item) => getSessionStatus(item) === 'live'),
@@ -610,19 +959,24 @@ export function HomePage({ session }: HomePageProps) {
     return upcomingClasses[0] ?? null
   }, [liveNowClasses, upcomingTodayClasses, upcomingClasses])
 
+  const pastClassesTotal = allClasses.filter(c => new Date(c.starts_at) < new Date()).length
   const completionPct = allClasses.length
-    ? Math.max(10, Math.min(95, Math.round((todayClasses.length / allClasses.length) * 100 + 30)))
-    : 42
+    ? Math.round((pastClassesTotal / allClasses.length) * 100)
+    : 0
 
   const submittedCount = assignmentSubmissions.filter((item) => Boolean(item.submitted_at)).length
-  const avgScore = assignmentSubmissions.length
+  const scoredSubmissions = assignmentSubmissions.filter((item) => item.marks !== null && item.marks !== undefined)
+  const avgScore = scoredSubmissions.length
     ? Math.round(
-        (assignmentSubmissions.reduce((sum, item) => sum + (item.marks ?? 0), 0) /
-          Math.max(1, assignmentSubmissions.filter((item) => item.marks !== null).length)) *
+        (scoredSubmissions.reduce((sum, item) => sum + (item.marks ?? 0), 0) /
+          scoredSubmissions.length) *
           10,
       ) / 10
     : 0
-  const attendancePct = todayClasses.length ? Math.max(70, 100 - upcomingTodayClasses.length * 8) : 85
+  const presentCount = attendanceRecords.filter(a => a.status === 'present').length
+  const attendancePct = pastClassesTotal > 0
+    ? Math.round((presentCount / pastClassesTotal) * 100)
+    : 0
   const progressPct = completionPct
 
   const learningStreakDays = useMemo(() => {
@@ -656,8 +1010,9 @@ export function HomePage({ session }: HomePageProps) {
       return `You have ${upcomingTodayClasses.length} class today at ${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
     }
     if (dueSoonAssignments.length) return `${dueSoonAssignments.length} assignment due soon. Submit today.`
-    return `You improved +${Math.max(8, Math.min(18, progressPct - 30))}% this week. Keep going.`
-  }, [dueSoonAssignments.length, liveNowClasses.length, progressPct, upcomingTodayClasses])
+    if (myBatches.length === 0) return 'Enroll in a batch to start learning.'
+    return `${progressPct}% progress so far. Keep going.`
+  }, [dueSoonAssignments.length, liveNowClasses.length, progressPct, upcomingTodayClasses, myBatches.length])
 
   const focusText = useMemo(() => {
     const focusItems: string[] = []
@@ -925,13 +1280,11 @@ export function HomePage({ session }: HomePageProps) {
         .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime()),
     [selectedBatchClasses],
   )
-  const visibleUpcomingClassRows = useMemo(
-    () => (upcomingClassesExpanded ? upcomingClassTableRows : upcomingClassTableRows.slice(0, 6)),
-    [upcomingClassTableRows, upcomingClassesExpanded],
-  )
+  const visibleUpcomingClassRows = upcomingClassTableRows
+  const pastClassesTotalPages = Math.max(1, Math.ceil(pastClassTableRows.length / PAST_CLASSES_PAGE_SIZE))
   const visiblePastClassRows = useMemo(
-    () => (pastClassesExpanded ? pastClassTableRows : pastClassTableRows.slice(0, 6)),
-    [pastClassTableRows, pastClassesExpanded],
+    () => pastClassTableRows.slice((pastClassesPage - 1) * PAST_CLASSES_PAGE_SIZE, pastClassesPage * PAST_CLASSES_PAGE_SIZE),
+    [pastClassTableRows, pastClassesPage, PAST_CLASSES_PAGE_SIZE],
   )
   const selectedBatchPendingAssignments = useMemo(
     () =>
@@ -988,8 +1341,12 @@ export function HomePage({ session }: HomePageProps) {
   const selectedBatchProgress = selectedBatchClasses.length
     ? Math.round((selectedBatchClassBuckets.completed.length / selectedBatchClasses.length) * 100)
     : 0
-  const selectedBatchAttendance = selectedBatchClasses.length
-    ? Math.max(60, 100 - selectedBatchClassBuckets.upcoming.length * 5)
+  const selectedBatchPastClasses = selectedBatchClassBuckets.completed.length
+  const selectedBatchPresentCount = attendanceRecords.filter(a =>
+    a.status === 'present' && selectedBatchClasses.some(c => c.id === a.class_session_id)
+  ).length
+  const selectedBatchAttendance = selectedBatchPastClasses > 0
+    ? Math.round((selectedBatchPresentCount / selectedBatchPastClasses) * 100)
     : 0
   const selectedBatchAvgScore = selectedBatchSubmittedAssignments.length
     ? Math.round(
@@ -1379,7 +1736,7 @@ export function HomePage({ session }: HomePageProps) {
   // Trainers are allowed to access only the batch "Community" tab for now.
 
   if (loading) {
-    return <div className="center-screen dashboard-loading">Loading dashboard...</div>
+    return <SpxLoader label="Loading dashboard…" />
   }
 
   if (error) {
@@ -1397,7 +1754,7 @@ export function HomePage({ session }: HomePageProps) {
   return (
     <main className={`student-layout ${isBatchWorkspaceView ? 'admin-batch-workspace-shell' : ''}`}>
       {!isBatchWorkspaceView ? (
-      <aside className="student-sidebar">
+      <aside className="student-sidebar admin-ds-sidebar">
         <div>
           <div className="brand">
             <img src="/sit-logo.png" alt="SIT logo" className="brand-logo" />
@@ -1408,76 +1765,64 @@ export function HomePage({ session }: HomePageProps) {
               className={`sidebar-item ${studentView === 'dashboard' ? 'active' : ''}`}
               onClick={() => navigate('/home')}
             >
-              <LayoutDashboard size={16} />
+              <LayoutDashboard size={18} />
               Dashboard
             </button>
-            <div className="student-batches-nav-wrap">
-              <button
-                className={`sidebar-item ${studentView === 'batch-detail' ? 'active' : ''}`}
-                onClick={() => setBatchesOpen((prev) => !prev)}
-              >
-                <Users size={16} />
-                Your Batches
-                <span className="student-batches-nav-chevron">
-                  {batchesOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </span>
-              </button>
-              {batchesOpen ? (
-                <div className="student-batches-nav-list">
-                  {myBatches.length ? (
-                    myBatches.map((batch) => (
-                      <button
-                        key={batch.id}
-                        type="button"
-                        className={`student-batch-nav-item ${selectedBatchId === batch.id ? 'active' : ''}`}
-                        onClick={() => {
-                          setSelectedBatchId(batch.id)
-                          navigate(`/home/batches/${batch.id}/${userRole === 'student' ? 'overview' : 'community'}`)
-                        }}
-                      >
-                        {batch.batch_code}
-                      </button>
-                    ))
-                  ) : (
-                    <p className="student-batch-nav-empty">No enrolled batches</p>
-                  )}
-                </div>
-              ) : null}
-            </div>
-            <button className="sidebar-item">
-              <CalendarDays size={16} />
+            <button
+              className={`sidebar-item ${studentView === 'batches-list' || studentView === 'batch-detail' ? 'active' : ''}`}
+              onClick={() => navigate('/home/batches')}
+            >
+              <Users size={18} />
+              Your Batches
+            </button>
+
+            <p className="sidebar-section-label">Learning</p>
+            <button
+              className={`sidebar-item ${studentView === 'my-classes' ? 'active' : ''}`}
+              onClick={() => navigate('/home/classes')}
+            >
+              <CalendarDays size={18} />
               My Classes
             </button>
-            <button className="sidebar-item">
-              <BookOpen size={16} />
+            <button
+              className={`sidebar-item ${studentView === 'my-assignments' ? 'active' : ''}`}
+              onClick={() => navigate('/home/assignments')}
+            >
+              <BookOpen size={18} />
               Assignments
             </button>
             <button className="sidebar-item">
-              <PlayCircle size={16} />
-              Recordings
-            </button>
-            <button className="sidebar-item">
-              <Library size={16} />
+              <Library size={18} />
               Study Materials
             </button>
+
+            <p className="sidebar-section-label">Progress</p>
             <button className="sidebar-item">
-              <Rocket size={16} />
+              <Rocket size={18} />
               Performance
             </button>
-            <button className="sidebar-item">
-              <Megaphone size={16} />
+            <button
+              className={`sidebar-item ${studentView === 'my-announcements' ? 'active' : ''}`}
+              onClick={() => navigate('/home/announcements')}
+            >
+              <Megaphone size={18} />
               Announcements
             </button>
             <button className="sidebar-item">
-              <MessageSquare size={16} />
+              <MessageSquare size={18} />
               Messages
             </button>
-            <button className="sidebar-item">
-              <User size={16} />
+
+            <p className="sidebar-section-label">Account</p>
+            <button
+              className={`sidebar-item ${studentView === 'my-profile' ? 'active' : ''}`}
+              onClick={() => navigate('/home/profile')}
+            >
+              <User size={18} />
               Profile
             </button>
             <button className="sidebar-item">
-              <Settings size={16} />
+              <Settings size={18} />
               Settings
             </button>
           </nav>
@@ -1494,8 +1839,806 @@ export function HomePage({ session }: HomePageProps) {
       </aside>
       ) : null}
 
-      <section className={`student-content student-v2-content ${isBatchWorkspaceView ? 'admin-batch-workspace-content' : ''}`}>
-        {studentView === 'batch-detail' ? (
+      <section className={`student-content student-v2-content ${isBatchWorkspaceView ? 'admin-batch-workspace-content' : ''} ${studentView === 'dashboard' || studentView === 'batches-list' || studentView === 'my-classes' || studentView === 'my-assignments' || studentView === 'my-announcements' || studentView === 'my-profile' ? 'spx-student-dash' : ''}`}>
+        {studentView === 'batches-list' ? (
+          <section className="spx-batches-list-page">
+            <header className="student-v2-topbar">
+              <h2>Batches</h2>
+              <div className="student-v2-top-actions">
+                <label className="student-v2-search">
+                  <Search size={14} />
+                  <input placeholder="Search batches..." />
+                </label>
+                <button type="button" className="student-v2-icon-btn">
+                  <Bell size={16} />
+                </button>
+                <div className="student-v2-avatar">{firstName[0]?.toUpperCase()}</div>
+              </div>
+            </header>
+
+            {/* Tabs */}
+            <div className="spx-batches-tabs">
+              <button
+                type="button"
+                className={`spx-batches-tab ${batchesTab === 'enrolled' ? 'active' : ''}`}
+                onClick={() => setBatchesTab('enrolled')}
+              >
+                Enrolled Batches
+                <span className="spx-batches-tab-count">{myBatches.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`spx-batches-tab ${batchesTab === 'all' ? 'active' : ''}`}
+                onClick={() => setBatchesTab('all')}
+              >
+                All Batches
+                <span className="spx-batches-tab-count">{unenrolledBatches.length}</span>
+              </button>
+            </div>
+
+            {/* Enrolled Batches Tab */}
+            {batchesTab === 'enrolled' ? (
+              <>
+                {myBatches.length === 0 ? (
+                  <div className="spx-batches-empty">
+                    <Users size={40} />
+                    <h3>No Enrolled Batches</h3>
+                    <p>You haven't been enrolled in any batches yet. Check the "All Batches" tab to enroll.</p>
+                  </div>
+                ) : (
+                  <div className="spx-batches-grid">
+                    {myBatches.map((batch) => {
+                      const classCount = allClasses.filter((c) => c.batch_id === batch.id).length
+                      const batchAssignments = assignments.filter((a) => a.batch_id === batch.id)
+                      const batchSubmissions = assignmentSubmissions.filter((s) =>
+                        batchAssignments.some((a) => a.id === s.assignment_id),
+                      )
+                      const completionPct = batchAssignments.length
+                        ? Math.round((batchSubmissions.length / batchAssignments.length) * 100)
+                        : 0
+                      const lastClass = allClasses
+                        .filter((c) => c.batch_id === batch.id && c.starts_at)
+                        .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime())[0]
+
+                      return (
+                        <button
+                          type="button"
+                          key={batch.id}
+                          className="spx-batch-card"
+                          onClick={() =>
+                            navigate(`/home/batches/${batch.id}/${userRole === 'student' ? 'overview' : 'community'}`)
+                          }
+                        >
+                          <div className="spx-batch-card-cover">
+                            <img src="/course-cover.png" alt="" />
+                            <span className={`spx-batch-status ${batch.status === 'in_progress' ? 'is-active' : batch.status === 'completed' ? 'is-completed' : 'is-upcoming'}`}>
+                              {batch.status === 'in_progress' ? 'Active' : batch.status === 'completed' ? 'Completed' : 'Upcoming'}
+                            </span>
+                          </div>
+                          <div className="spx-batch-card-body">
+                            <h4 className="spx-batch-card-title">{batch.batch_code}</h4>
+                            <p className="spx-batch-card-trainer">
+                              <User size={13} />
+                              {batch.trainer_name || 'No trainer assigned'}
+                            </p>
+                            <div className="spx-batch-card-stats">
+                              <span>
+                                <CalendarDays size={13} />
+                                {classCount} Classes
+                              </span>
+                              <span>
+                                <BookOpen size={13} />
+                                {batchAssignments.length} Assignments
+                              </span>
+                            </div>
+                            <div className="spx-batch-card-progress">
+                              <div className="spx-batch-card-progress-info">
+                                <span>Progress</span>
+                                <span>{completionPct}%</span>
+                              </div>
+                              <div className="spx-batch-card-bar">
+                                <div style={{ width: `${completionPct}%` }} />
+                              </div>
+                            </div>
+                            {lastClass ? (
+                              <p className="spx-batch-card-last">
+                                Last class: <span>{lastClass.title}</span>
+                              </p>
+                            ) : null}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {unenrolledBatches.length === 0 ? (
+                  <div className="spx-batches-empty">
+                    <CheckCircle2 size={40} />
+                    <h3>All Caught Up!</h3>
+                    <p>You're already enrolled in all available batches.</p>
+                  </div>
+                ) : (
+                  <div className="spx-all-batches-grid">
+                    {unenrolledBatches.map((batch) => {
+                      const startFormatted = batch.start_date
+                        ? new Date(batch.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : 'TBA'
+                      const endFormatted = batch.end_date
+                        ? new Date(batch.end_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : 'TBA'
+                      return (
+                        <div key={batch.id} className="spx-enroll-card">
+                          <div className="spx-enroll-card-cover">
+                            <img src="/course-cover.png" alt="" />
+                            <span className={`spx-batch-status ${batch.status === 'in_progress' ? 'is-active' : batch.status === 'completed' ? 'is-completed' : 'is-upcoming'}`}>
+                              {batch.status === 'in_progress' ? 'Active' : batch.status === 'completed' ? 'Completed' : 'Upcoming'}
+                            </span>
+                          </div>
+                          <div className="spx-enroll-card-body">
+                            <div className="spx-enroll-card-top">
+                              <span className="spx-enroll-type">{batch.batch_type || 'General'}</span>
+                            </div>
+                            <h4 className="spx-enroll-card-title">{batch.batch_code}</h4>
+                            <div className="spx-enroll-card-info">
+                              <div className="spx-enroll-info-row">
+                                <User size={14} />
+                                <span>{batch.trainer_name || 'No trainer assigned'}</span>
+                              </div>
+                              <div className="spx-enroll-info-row">
+                                <CalendarDays size={14} />
+                                <span>{startFormatted} — {endFormatted}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="spx-enroll-btn"
+                              disabled={enrollingBatchId === batch.id}
+                              onClick={() => handleEnroll(batch.id)}
+                            >
+                              {enrollingBatchId === batch.id ? (
+                                <>Enrolling…</>
+                              ) : (
+                                <>
+                                  <CheckCircle2 size={14} />
+                                  Enroll Now
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        ) : studentView === 'my-classes' ? (
+          <section className="spx-my-classes-page">
+            <header className="student-v2-topbar">
+              <h2>My Classes</h2>
+            </header>
+
+            {/* Tabs */}
+            <nav className="spx-batches-tabs">
+              <button
+                type="button"
+                className={`spx-batches-tab ${myClassesTab === 'upcoming' ? 'active' : ''}`}
+                onClick={() => { setMyClassesTab('upcoming'); setMyClassesPage(1) }}
+              >
+                Upcoming <span className="spx-batches-tab-count">{allUpcomingClasses.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`spx-batches-tab ${myClassesTab === 'past' ? 'active' : ''}`}
+                onClick={() => { setMyClassesTab('past'); setMyClassesPage(1) }}
+              >
+                Past Classes <span className="spx-batches-tab-count">{allPastClasses.length}</span>
+              </button>
+            </nav>
+
+            <article className="student-classes-table-card spx-my-classes-table-card">
+              <table className="student-classes-table spx-my-classes-table">
+                <thead>
+                  <tr className="admin-table-head">
+                    <th>Date</th>
+                    <th>Topic</th>
+                    <th>Batch</th>
+                    {myClassesTab === 'upcoming' ? <th>Time</th> : null}
+                    <th>Attachments</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myClassesPageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={myClassesTab === 'upcoming' ? 6 : 5} style={{ textAlign: 'center', padding: '40px 14px', color: '#9CA3AF' }}>
+                        No {myClassesTab === 'upcoming' ? 'upcoming' : 'past'} classes
+                      </td>
+                    </tr>
+                  ) : myClassesPageRows.map((item) => {
+                    const classAssignments = classAssignmentsBySessionId.get(item.id) ?? []
+                    const primaryClassAssignment = classAssignments[0]
+                    const classSubmission = primaryClassAssignment
+                      ? submissionByAssignmentId.get(primaryClassAssignment.id)
+                      : undefined
+                    const classAttachmentUrl = getClassAttachmentUrl(item.description)
+                    const attachmentUrls = [
+                      ...classAssignments
+                        .map((a) => a.attachment_url)
+                        .filter((url): url is string => Boolean(url)),
+                      ...(classAttachmentUrl ? [classAttachmentUrl] : []),
+                    ]
+                    const attachmentCount = classAssignments.filter((a) => Boolean(a.attachment_url)).length + (classAttachmentUrl ? 1 : 0)
+
+                    if (myClassesTab === 'upcoming') {
+                      const showSubmitAssignment = Boolean(primaryClassAssignment)
+                      const submitAssignmentLabel = classSubmission?.submitted_at ? 'View Submission' : 'Submit Assignment'
+                      return (
+                        <tr key={item.id}>
+                          <td>
+                            <div className={`student-classes-table-date weekday-${new Date(item.starts_at).getDay()}`}>
+                              <strong>{new Date(item.starts_at).getDate()}</strong>
+                              <small>{formatMonthShort(item.starts_at)}</small>
+                            </div>
+                          </td>
+                          <td><p className="student-classes-topic">{item.title}</p></td>
+                          <td><span className="spx-my-classes-batch-pill">{item.batch_code}</span></td>
+                          <td className="student-classes-time-cell">{formatTimeRange(item.starts_at, item.ends_at)}</td>
+                          <td>
+                            {attachmentCount ? (
+                              <button type="button" className="student-classes-attachment-btn" onClick={() => window.open(attachmentUrls[0], '_blank', 'noopener,noreferrer')}>
+                                <Link2 size={13} /> {attachmentCount} {attachmentCount === 1 ? 'File' : 'Files'}
+                              </button>
+                            ) : <span className="student-classes-attachment-empty">–</span>}
+                          </td>
+                          <td>
+                            <div className="spx-class-actions">
+                              <button type="button" className="spx-act-join" disabled={joinBusyMeetingId === item.zoom_meeting_id} onClick={() => handleJoinClass(item)}>
+                                <Video size={12} /> Join
+                              </button>
+                              {showSubmitAssignment ? (
+                                <button type="button" className="spx-act-assignment" onClick={() => openAssignmentDrawer(primaryClassAssignment, classSubmission?.submitted_at ? 'view' : 'submit', classSubmission)}>
+                                  {submitAssignmentLabel === 'View Submission' ? <FileText size={12} /> : <Upload size={12} />}
+                                  {submitAssignmentLabel}
+                                </button>
+                              ) : null}
+                              <button type="button" className="spx-act-calendar" onClick={() => handleAddToCalendar(item)}>
+                                <CalendarDays size={12} /> Add to Calendar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    }
+
+                    // Past
+                    const showAssignmentAction = Boolean(primaryClassAssignment)
+                    const assignmentLabel = classSubmission?.submitted_at ? 'View Submission' : 'Submit Assignment'
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <div className="student-classes-table-date is-neutral">
+                            <strong>{new Date(item.starts_at).getDate()}</strong>
+                            <small>{formatMonthShort(item.starts_at)}</small>
+                          </div>
+                        </td>
+                        <td><p className="student-classes-topic">{item.title}</p></td>
+                        <td><span className="spx-my-classes-batch-pill">{item.batch_code}</span></td>
+                        <td>
+                          {attachmentCount ? (
+                            <button type="button" className="student-classes-attachment-btn" onClick={() => window.open(attachmentUrls[0], '_blank', 'noopener,noreferrer')}>
+                              <Link2 size={13} /> {attachmentCount} {attachmentCount === 1 ? 'File' : 'Files'}
+                            </button>
+                          ) : <span className="student-classes-attachment-empty">–</span>}
+                        </td>
+                        <td>
+                          <div className="spx-class-actions">
+                            {item.recording_url ? (
+                              <a href={item.recording_url} target="_blank" rel="noreferrer" className="spx-act-watch">
+                                <Play size={12} /> Watch Recording
+                              </a>
+                            ) : null}
+                            {showAssignmentAction ? (
+                              <button type="button" className="spx-act-assignment" onClick={() => openAssignmentDrawer(primaryClassAssignment, classSubmission?.submitted_at ? 'view' : 'submit', classSubmission)}>
+                                {assignmentLabel === 'View Submission' ? <FileText size={12} /> : <Upload size={12} />}
+                                {assignmentLabel}
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {myClassesSource.length > 0 ? (
+                <div className="student-classes-table-foot lc-pagination-foot">
+                  <p>Showing {((myClassesPage - 1) * MY_CLASSES_PAGE_SIZE) + 1} to {Math.min(myClassesPage * MY_CLASSES_PAGE_SIZE, myClassesSource.length)} of {myClassesSource.length} classes</p>
+                  <div className="lc-pagination">
+                    <button type="button" className="lc-page-btn" disabled={myClassesPage <= 1} onClick={() => setMyClassesPage(p => p - 1)}>
+                      <ChevronLeft size={14} />
+                    </button>
+                    {Array.from({ length: myClassesTotalPages }, (_, i) => i + 1).map(pg => (
+                      <button key={pg} type="button" className={`lc-page-btn ${pg === myClassesPage ? 'is-active' : ''}`} onClick={() => setMyClassesPage(pg)}>
+                        {pg}
+                      </button>
+                    ))}
+                    <button type="button" className="lc-page-btn" disabled={myClassesPage >= myClassesTotalPages} onClick={() => setMyClassesPage(p => p + 1)}>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          </section>
+        ) : studentView === 'my-assignments' ? (
+          <section className="spx-my-classes-page">
+            <header className="student-v2-topbar">
+              <h2>Assignments</h2>
+            </header>
+
+            {/* Tabs */}
+            <nav className="spx-batches-tabs">
+              <button
+                type="button"
+                className={`spx-batches-tab ${myAssignmentsTab === 'all' ? 'active' : ''}`}
+                onClick={() => { setMyAssignmentsTab('all'); setMyAssignmentsPage(1) }}
+              >
+                All Assignments <span className="spx-batches-tab-count">{myAssignmentsCounts.all}</span>
+              </button>
+              <button
+                type="button"
+                className={`spx-batches-tab ${myAssignmentsTab === 'pending' ? 'active' : ''}`}
+                onClick={() => { setMyAssignmentsTab('pending'); setMyAssignmentsPage(1) }}
+              >
+                Pending <span className="spx-batches-tab-count">{myAssignmentsCounts.pending}</span>
+              </button>
+              <button
+                type="button"
+                className={`spx-batches-tab ${myAssignmentsTab === 'completed' ? 'active' : ''}`}
+                onClick={() => { setMyAssignmentsTab('completed'); setMyAssignmentsPage(1) }}
+              >
+                Completed <span className="spx-batches-tab-count">{myAssignmentsCounts.completed}</span>
+              </button>
+            </nav>
+
+            <article className="student-classes-table-card spx-my-classes-table-card">
+              <table className="student-assignments-table spx-my-classes-table">
+                <thead>
+                  <tr>
+                    <th>Assignment</th>
+                    <th>Batch</th>
+                    <th>Due Date</th>
+                    <th>Status</th>
+                    <th>Marks</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myAssignmentsPageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '40px 14px', color: '#9CA3AF' }}>
+                        No {myAssignmentsTab === 'all' ? '' : myAssignmentsTab} assignments
+                      </td>
+                    </tr>
+                  ) : myAssignmentsPageRows.map(({ item, submission, status }) => {
+                    const actionLabel =
+                      status === 'evaluated'
+                        ? 'View Feedback'
+                        : status === 'under-evaluation'
+                          ? 'View Submission'
+                          : status === 'overdue'
+                            ? 'Submit Late'
+                            : 'Submit'
+                    const canSubmit = status === 'pending' || status === 'overdue'
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <div className="student-assignment-cell-main">
+                            <span className="student-assignment-icon">
+                              <FileText size={14} />
+                            </span>
+                            <div>
+                              <p>{item.title}</p>
+                              <small>{item.description || 'Assignment details available in submission drawer.'}</small>
+                            </div>
+                          </div>
+                        </td>
+                        <td><span className="spx-my-classes-batch-pill">{batchCodeById.get(item.batch_id) ?? '—'}</span></td>
+                        <td>
+                          <div className="student-assignment-due-cell">
+                            <p>{formatDateOnly(item.due_at)}</p>
+                            <small>
+                              {new Date(item.due_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true,
+                              })}
+                            </small>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`student-assignment-status ${getAssignmentStatusClass(status)}`}>
+                            {getAssignmentStatusLabel(status)}
+                          </span>
+                        </td>
+                        <td className="student-assignment-marks">
+                          {submission?.marks !== null && submission?.marks !== undefined
+                            ? `${submission.marks} / ${item.max_marks ?? 10}`
+                            : '—'}
+                        </td>
+                        <td>
+                          <div className="spx-class-actions">
+                            <button
+                              type="button"
+                              className={canSubmit ? 'spx-act-join' : 'spx-act-assignment'}
+                              onClick={() => {
+                                if (canSubmit) openAssignmentDrawer(item, 'submit')
+                                else openAssignmentDrawer(item, 'view', submission ?? undefined)
+                              }}
+                            >
+                              {actionLabel}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {myAssignmentsFiltered.length > 0 ? (
+                <div className="student-classes-table-foot lc-pagination-foot">
+                  <p>Showing {((myAssignmentsPage - 1) * MY_ASSIGNMENTS_PAGE_SIZE) + 1} to {Math.min(myAssignmentsPage * MY_ASSIGNMENTS_PAGE_SIZE, myAssignmentsFiltered.length)} of {myAssignmentsFiltered.length} assignments</p>
+                  <div className="lc-pagination">
+                    <button type="button" className="lc-page-btn" disabled={myAssignmentsPage <= 1} onClick={() => setMyAssignmentsPage(p => p - 1)}>
+                      <ChevronLeft size={14} />
+                    </button>
+                    {Array.from({ length: myAssignmentsTotalPages }, (_, i) => i + 1).map(pg => (
+                      <button key={pg} type="button" className={`lc-page-btn ${pg === myAssignmentsPage ? 'is-active' : ''}`} onClick={() => setMyAssignmentsPage(pg)}>
+                        {pg}
+                      </button>
+                    ))}
+                    <button type="button" className="lc-page-btn" disabled={myAssignmentsPage >= myAssignmentsTotalPages} onClick={() => setMyAssignmentsPage(p => p + 1)}>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </article>
+
+            {/* Reuse assignment drawer */}
+            <div className={`student-assignment-drawer-backdrop ${assignmentDrawerOpen ? 'open' : ''}`} onClick={closeAssignmentDrawer} />
+            <aside className={`student-assignment-drawer ${assignmentDrawerOpen ? 'open' : ''}`}>
+              <header>
+                <div className="student-assignment-drawer-title">
+                  <span className="student-assignment-icon">
+                    <FileText size={14} />
+                  </span>
+                  <div className="student-assignment-drawer-title-text">
+                    <h4>{activeAssignment?.title ?? 'Assignment'}</h4>
+                    <p>Assignment Details</p>
+                  </div>
+                </div>
+                <button type="button" onClick={closeAssignmentDrawer} aria-label="Close assignment drawer">
+                  <X size={16} />
+                </button>
+              </header>
+              <div className="student-assignment-drawer-body">
+                {assignmentDrawerMode === 'view' ? (
+                  <>
+                    <section className="student-assignment-drawer-section">
+                      <h5>Your Submission</h5>
+                      {activeSubmissionSnapshot?.file_url ? (
+                        <a href={activeSubmissionSnapshot.file_url} target="_blank" rel="noreferrer" className="student-assignment-file-link">
+                          <FolderOpen size={14} /> View Submitted File
+                        </a>
+                      ) : null}
+                      {activeSubmissionSnapshot?.text_answer ? (
+                        <p className="student-assignment-text-answer">{activeSubmissionSnapshot.text_answer}</p>
+                      ) : null}
+                    </section>
+                    {activeSubmissionSnapshot?.feedback ? (
+                      <section className="student-assignment-drawer-section">
+                        <h5>Trainer Feedback</h5>
+                        <p className="student-assignment-text-answer">{activeSubmissionSnapshot.feedback}</p>
+                        {activeSubmissionSnapshot.feedback_file ? (
+                          <a href={activeSubmissionSnapshot.feedback_file} target="_blank" rel="noreferrer" className="student-assignment-file-link">
+                            <FolderOpen size={14} /> View Feedback File
+                          </a>
+                        ) : null}
+                      </section>
+                    ) : null}
+                  </>
+                ) : (
+                  <form
+                    className="student-assignment-submit-form"
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+                      if (!activeAssignment) return
+                      const form = e.currentTarget
+                      const fileInput = form.querySelector<HTMLInputElement>('input[type=file]')
+                      const textInput = form.querySelector<HTMLTextAreaElement>('textarea')
+                      const file = fileInput?.files?.[0]
+                      const textVal = textInput?.value?.trim() ?? ''
+                      if (!file && !textVal) return
+                      let fileUrl: string | null = null
+                      if (file) {
+                        const path = `submissions/${session.user.id}/${activeAssignment.id}/${file.name}`
+                        const { error: uploadError } = await supabase.storage.from('assignments').upload(path, file, { upsert: true })
+                        if (!uploadError) {
+                          const { data: urlData } = supabase.storage.from('assignments').getPublicUrl(path)
+                          fileUrl = urlData?.publicUrl ?? null
+                        }
+                      }
+                      await supabase.from('assignment_submissions').upsert(
+                        {
+                          assignment_id: activeAssignment.id,
+                          student_id: (await supabase.from('students').select('id').eq('user_id', session.user.id).single()).data?.id,
+                          file_url: fileUrl,
+                          text_answer: textVal || null,
+                          submitted_at: new Date().toISOString(),
+                        },
+                        { onConflict: 'assignment_id,student_id' },
+                      )
+                      closeAssignmentDrawer()
+                      window.location.reload()
+                    }}
+                  >
+                    <label className="student-assignment-upload-label">
+                      Upload File
+                      <input type="file" />
+                    </label>
+                    <label className="student-assignment-text-label">
+                      Or type your answer
+                      <textarea rows={4} placeholder="Type your answer here..." />
+                    </label>
+                    <button type="submit" className="student-assignment-submit-btn">Submit Assignment</button>
+                  </form>
+                )}
+              </div>
+            </aside>
+          </section>
+        ) : studentView === 'my-profile' ? (
+          <section className="spx-my-classes-page">
+            <header className="student-v2-topbar">
+              <h2>My Profile</h2>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {profileEditMode ? (
+                  <>
+                    <button className="spx-act-calendar" onClick={() => setProfileEditMode(false)}>Cancel</button>
+                    <button className="spx-act-join" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? 'Saving…' : 'Save Changes'}</button>
+                  </>
+                ) : (
+                  <button className="spx-act-join" onClick={openProfileEdit}><Pencil size={12} /> Edit Profile</button>
+                )}
+              </div>
+            </header>
+
+            {profileData ? (
+              <div className="student-detail-page" style={{ background: 'transparent' }}>
+                <div className="spx-body" style={{ padding: 0 }}>
+                  <div className="spx-col-main" style={{ maxWidth: 'none' }}>
+                    {/* Hero Card */}
+                    <div className="spx-hero">
+                      <div className="spx-hero-top">
+                        <div className="spx-avatar-wrap" onClick={() => avatarInputRef.current?.click()} title="Click to upload photo" style={{ cursor: 'pointer' }}>
+                          {profileData.avatar_url ? (
+                            <img src={profileData.avatar_url} alt={profileData.student_name} className="spx-avatar spx-avatar-img" />
+                          ) : (
+                            <div className="spx-avatar">{profileData.student_name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}</div>
+                          )}
+                          <div className={`spx-avatar-overlay${avatarUploading ? ' uploading' : ''}`}>
+                            {avatarUploading ? (
+                              <span className="spx-avatar-spinner" />
+                            ) : (
+                              <>
+                                <Upload size={18} />
+                                <span>Upload</span>
+                              </>
+                            )}
+                          </div>
+                          <input
+                            ref={avatarInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            style={{ display: 'none' }}
+                            onChange={(e) => void handleAvatarSelect(e)}
+                          />
+                        </div>
+                        <div className="spx-hero-info">
+                          <div className="spx-hero-name-row">
+                            <span className="spx-hero-name">{profileData.student_name}</span>
+                          </div>
+                          <div className="spx-hero-meta">
+                            <span className="spx-meta-item"><Mail size={14} /> {profileData.email}</span>
+                            {profileData.phone && <span className="spx-meta-item"><Phone size={14} /> {profileData.phone}</span>}
+                          </div>
+                          <div className="spx-badge-row">
+                            <span className="spx-badge spx-badge-training">{profileData.stage?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) ?? 'Training'}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="spx-hero-stats">
+                        <div className="spx-stat"><div className="spx-stat-lbl">Batches Enrolled</div><div className="spx-stat-val">{myBatches.length}</div></div>
+                        <div className="spx-stat"><div className="spx-stat-lbl">Attendance</div><div className="spx-stat-val">{profileData.attendance_pct != null ? `${Math.round(profileData.attendance_pct)}%` : '—'}</div></div>
+                        <div className="spx-stat"><div className="spx-stat-lbl">Progress</div><div className="spx-stat-val">{profileData.progress_pct != null ? `${Math.round(profileData.progress_pct)}%` : '—'}</div></div>
+                        <div className="spx-stat"><div className="spx-stat-lbl">Assignments</div><div className="spx-stat-val">{assignments.length}</div></div>
+                      </div>
+                    </div>
+
+                    {/* Basic Details Section */}
+                    <div className="spx-section">
+                      <div className="spx-section-hdr"><span className="spx-section-title"><User size={16} /> Basic Details</span></div>
+                      <div className="spx-fields spx-fields-5">
+                        {renderProfileField('Full Name', 'student_name')}
+                        {renderProfileField('Email', 'email', 'email')}
+                        {renderProfileField('Phone', 'phone', 'tel')}
+                        {renderProfileField('Gender', 'gender', 'select', ['Male', 'Female', 'Other'])}
+                        {renderProfileField('City', 'location')}
+                      </div>
+                    </div>
+
+                    {/* Education & Professional */}
+                    <div className="spx-section">
+                      <div className="spx-section-hdr"><span className="spx-section-title"><Briefcase size={16} /> Education & Professional</span></div>
+                      <div className="spx-fields spx-fields-5">
+                        {renderProfileField('Degree', 'degree', 'select', ['MBA', 'ME/ MTech', 'BE/ BTech', 'BBA', 'BCom', 'BSc', "master's_degree", 'diploma', "bachelor's_degree", 'other'])}
+                        {renderProfileField('Previous Company', 'previous_company')}
+                        {renderProfileField('Previous Role', 'previous_job_role')}
+                        {renderProfileField('Experience (Years)', 'experience_years', 'number')}
+                        {renderProfileField('Domain', 'domain', 'select', ['Sales', 'Operations', 'Banking', 'Finance', "BPO's", 'Healthcare', 'Fresher', 'Teacher', 'Developer', 'Testing', 'HR Recruiters', 'Digital Marketing', 'Engineers', 'Support'])}
+                      </div>
+                    </div>
+
+                    {/* Profile Links */}
+                    <div className="spx-section">
+                      <div className="spx-section-hdr"><span className="spx-section-title"><Link2 size={16} /> Profile Links</span></div>
+                      <div className="spx-fields spx-fields-5">
+                        {renderProfileField('LinkedIn', 'linkedin_url', 'url')}
+                        {/* Resume file upload */}
+                        <div>
+                          <div className="spx-field-lbl">Resume</div>
+                          {profileData.resume_url ? (
+                            <div className="spx-field-val" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <a href={profileData.resume_url} target="_blank" rel="noreferrer" style={{ color: '#6366F1', textDecoration: 'underline', fontSize: 13 }}>
+                                <FileText size={14} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />
+                                View Resume
+                              </a>
+                              <button
+                                className="spx-act-assignment"
+                                style={{ fontSize: 11, height: 26, padding: '0 8px', borderRadius: 6 }}
+                                onClick={() => resumeInputRef.current?.click()}
+                                disabled={resumeUploading}
+                              >
+                                {resumeUploading ? 'Uploading…' : 'Replace'}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="spx-act-join"
+                              style={{ fontSize: 12, height: 30, padding: '0 12px', borderRadius: 7, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                              onClick={() => resumeInputRef.current?.click()}
+                              disabled={resumeUploading}
+                            >
+                              <Upload size={13} />
+                              {resumeUploading ? 'Uploading…' : 'Upload Resume'}
+                            </button>
+                          )}
+                          <input
+                            ref={resumeInputRef}
+                            type="file"
+                            accept=".pdf,.doc,.docx"
+                            style={{ display: 'none' }}
+                            onChange={(e) => void handleResumeSelect(e)}
+                          />
+                        </div>
+                        {renderProfileField('Naukri', 'naukri_url', 'url')}
+                        {renderProfileField('Portfolio', 'portfolio_url', 'url')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : <p style={{ textAlign: 'center', padding: 40, color: '#9CA3AF' }}>Loading profile...</p>}
+          </section>
+        ) : studentView === 'my-announcements' ? (
+          <section className="spx-my-classes-page">
+            <header className="student-v2-topbar">
+              <h2>Announcements</h2>
+            </header>
+
+            <div className="student-announcements-list">
+              {announcements.length === 0 ? (
+                <p style={{ textAlign: 'center', padding: '40px 14px', color: '#9CA3AF', fontFamily: 'DM Sans, sans-serif' }}>No announcements yet</p>
+              ) : announcements.map((item) => {
+                const summary = announcementReactionSummary.get(item.id) ?? {
+                  counts: { thumbs_up: 0, fire: 0, clap: 0, heart: 0 },
+                  reactedStudentCount: 0,
+                }
+                const myReactions = announcementMyReactions.get(item.id) ?? new Set<AnnouncementReactionType>()
+                const reactionConfig: Array<{ id: AnnouncementReactionType; emoji: string }> = [
+                  { id: 'thumbs_up', emoji: '👍' },
+                  { id: 'fire', emoji: '🔥' },
+                  { id: 'clap', emoji: '👏' },
+                  { id: 'heart', emoji: '❤️' },
+                ]
+                return (
+                  <article key={item.id} className="student-announcement-card">
+                    <div className="student-announcement-top">
+                      <div className="student-announcement-left">
+                        <span className="student-announcement-icon">
+                          <Megaphone size={15} />
+                        </span>
+                        <div className="student-announcement-copy">
+                          <h4>{item.title}</h4>
+                          <p className="student-announcement-meta">
+                            {new Date(item.published_at).toLocaleDateString([], { weekday: 'long' })},{' '}
+                            {new Date(item.published_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                          </p>
+                          <p className="student-announcement-body">{item.body}</p>
+                          {item.attachment_url ? (
+                            <a className="batch-announce-attachment-link" href={item.attachment_url} target="_blank" rel="noreferrer">
+                              {/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(item.attachment_url) ? (
+                                <img className="batch-announce-attachment-image" src={item.attachment_url} alt="Announcement attachment" />
+                              ) : (
+                                <span>Open attachment</span>
+                              )}
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="student-announcement-bottom">
+                      <div className="student-announcement-reactions">
+                        {item.batch_id ? (
+                          <span className="spx-my-classes-batch-pill">{batchCodeById.get(item.batch_id) ?? ''}</span>
+                        ) : null}
+                        {reactionConfig
+                          .filter((reaction) => summary.counts[reaction.id] > 0)
+                          .map((reaction) => (
+                            <span key={reaction.id}>{reaction.emoji} {summary.counts[reaction.id]}</span>
+                          ))}
+                        <button
+                          type="button"
+                          className="student-announcement-react-btn"
+                          onClick={() => setOpenReactionAnnouncementId((prev) => (prev === item.id ? null : item.id))}
+                        >
+                          React
+                        </button>
+                        {openReactionAnnouncementId === item.id ? (
+                          <div className="student-announcement-reaction-picker">
+                            {reactionConfig.map((reaction) => (
+                              <button
+                                key={reaction.id}
+                                type="button"
+                                className={myReactions.has(reaction.id) ? 'active' : ''}
+                                onClick={() => handleToggleAnnouncementReaction(item.id, reaction.id)}
+                              >
+                                {reaction.emoji}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="student-announcement-reacted">
+                        <div className="student-announcement-avatars">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <p>{summary.reactedStudentCount} students reacted</p>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        ) : studentView === 'batch-detail' ? (
           <section className="student-batch-detail-page student-batch-detail-revamp">
             <aside className="admin-batch-detail-left">
               <button type="button" className="batch-detail-back admin-batch-detail-back" onClick={() => navigate('/home')}>
@@ -1522,6 +2665,40 @@ export function HomePage({ session }: HomePageProps) {
                     <CalendarDays size={13} /> {formatDateOnly(selectedBatch?.start_date)} - {formatDateOnly(selectedBatch?.end_date)}
                   </span>
                 </p>
+                <div className="admin-batch-detail-divider" aria-hidden="true" />
+              </div>
+
+              {/* ── Sidebar progress bars ── */}
+              <div className="spx-sidebar-stats">
+                <div className="spx-sidebar-pbar">
+                  <div className="spx-sidebar-pbar-header">
+                    <span>Your Attendance</span>
+                    <span>{selectedBatchAttendance}%</span>
+                  </div>
+                  <div className="spx-sidebar-pbar-track">
+                    <div className="spx-sidebar-pbar-fill is-green" style={{ width: `${selectedBatchAttendance}%` }} />
+                  </div>
+                </div>
+
+                <div className="spx-sidebar-pbar">
+                  <div className="spx-sidebar-pbar-header">
+                    <span>Your Progress</span>
+                    <span>{selectedBatchProgress}%</span>
+                  </div>
+                  <div className="spx-sidebar-pbar-track">
+                    <div className="spx-sidebar-pbar-fill is-blue" style={{ width: `${selectedBatchProgress}%` }} />
+                  </div>
+                </div>
+
+                <div className="spx-sidebar-pbar">
+                  <div className="spx-sidebar-pbar-header">
+                    <span>Assignments</span>
+                    <span>{selectedBatchSubmittedAssignments.length}/{selectedBatchAssignments.length || 0}</span>
+                  </div>
+                  <div className="spx-sidebar-pbar-track">
+                    <div className="spx-sidebar-pbar-fill is-purple" style={{ width: `${selectedBatchAssignments.length ? Math.round((selectedBatchSubmittedAssignments.length / selectedBatchAssignments.length) * 100) : 0}%` }} />
+                  </div>
+                </div>
               </div>
 
               <div className="student-batch-next-card admin-batch-detail-next-card">
@@ -1583,148 +2760,177 @@ export function HomePage({ session }: HomePageProps) {
 
             <section className="student-batch-tab-content">
               {batchDetailTab === 'overview' ? (
-                <div className="student-batch-overview-split">
-                  <article className="student-batch-overview-card">
-                    <h3 className="student-batch-overview-title">Today's Plan</h3>
-                    <div className="student-batch-plan-list">
-                      {immediateClassAction ? (
-                        <article className="student-batch-plan-item is-live-item">
-                          <div>
-                            <p className="student-batch-plan-label is-live">
-                              {formatClassActionLabel(immediateClassAction)}
-                            </p>
-                            <p className="student-batch-plan-time">
-                              {formatTimeRange(immediateClassAction.starts_at, immediateClassAction.ends_at)}
-                            </p>
-                            <p className="student-batch-plan-main">{immediateClassAction.title}</p>
-                            <p className="student-batch-plan-meta">{selectedBatch?.trainer_name ?? 'Trainer'}</p>
-                          </div>
-                          <button
-                            type="button"
-                            className="student-batch-btn student-batch-btn-success"
-                            disabled={joinBusyMeetingId === immediateClassAction.zoom_meeting_id}
-                            onClick={() => handleJoinClass(immediateClassAction)}
-                          >
-                            Join Now
-                          </button>
-                        </article>
-                      ) : null}
+                <section className="spx-bd-overview">
+                  {/* ── Left column: Today's Plan + KPIs ── */}
+                  <div className="spx-bd-left">
+                    <article className="spx-bd-panel">
+                      <h3>Today&apos;s Plan</h3>
+                      <div className="spx-bd-plan-list">
+                        {immediateClassAction ? (
+                          <article className="spx-bd-plan-card is-live">
+                            <div>
+                              <p className="spx-bd-plan-label">
+                                {formatClassActionLabel(immediateClassAction)}
+                              </p>
+                              <h4>{immediateClassAction.title}</h4>
+                              <span>{formatTimeRange(immediateClassAction.starts_at, immediateClassAction.ends_at)} · {selectedBatch?.trainer_name ?? 'Trainer'}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="spx-bd-plan-btn is-live"
+                              disabled={joinBusyMeetingId === immediateClassAction.zoom_meeting_id}
+                              onClick={() => handleJoinClass(immediateClassAction)}
+                            >
+                              Join Now
+                            </button>
+                          </article>
+                        ) : null}
 
-                      {assignmentAction ? (
-                        <article className="student-batch-plan-item">
-                          <div>
-                            <p className="student-batch-plan-label is-assignment">
-                              {selectedBatchOverdueAssignments.some((item) => item.id === assignmentAction.id)
-                                ? 'Assignment Overdue'
-                                : 'Assignment Pending'}
-                            </p>
-                            <p className="student-batch-plan-main">{assignmentAction.title}</p>
-                            <p className="student-batch-plan-meta">
-                              Due: {formatDateTimeShort(assignmentAction.due_at)}
-                            </p>
-                          </div>
-                          <button type="button" className="student-batch-btn student-batch-btn-warning">
-                            Submit
-                          </button>
-                        </article>
-                      ) : null}
+                        {assignmentAction ? (
+                          <article className="spx-bd-plan-card is-assignment">
+                            <div>
+                              <p className="spx-bd-plan-label">
+                                {selectedBatchOverdueAssignments.some((item) => item.id === assignmentAction.id)
+                                  ? 'Assignment Overdue'
+                                  : 'Assignment Pending'}
+                              </p>
+                              <h4>{assignmentAction.title}</h4>
+                              <span>Due: {formatDateTimeShort(assignmentAction.due_at)}</span>
+                            </div>
+                            <button type="button" className="spx-bd-plan-btn is-assignment">
+                              Submit
+                            </button>
+                          </article>
+                        ) : null}
 
-                      {revisionActionClass ? (
-                        <article className="student-batch-plan-item">
-                          <div>
-                            <p className="student-batch-plan-label is-revision">Revision</p>
-                            <p className="student-batch-plan-main">
-                              Revise: {revisionActionClass.title}
-                            </p>
-                            <p className="student-batch-plan-meta">
-                              Last class: {formatDateTimeShort(revisionActionClass.starts_at)}
-                            </p>
-                          </div>
-                          <a
-                            href={revisionActionClass.recording_url ?? '#'}
-                            className="student-batch-btn student-batch-btn-revision"
-                            target={revisionActionClass.recording_url ? '_blank' : undefined}
-                            rel={revisionActionClass.recording_url ? 'noreferrer' : undefined}
-                          >
-                            Revise
-                          </a>
-                        </article>
-                      ) : null}
+                        {revisionActionClass ? (
+                          <article className="spx-bd-plan-card is-revision">
+                            <div>
+                              <p className="spx-bd-plan-label">Revision</p>
+                              <h4>Revise: {revisionActionClass.title}</h4>
+                              <span>Last class: {formatDateTimeShort(revisionActionClass.starts_at)}</span>
+                            </div>
+                            <a
+                              href={revisionActionClass.recording_url ?? '#'}
+                              className="spx-bd-plan-btn is-revision"
+                              target={revisionActionClass.recording_url ? '_blank' : undefined}
+                              rel={revisionActionClass.recording_url ? 'noreferrer' : undefined}
+                            >
+                              Revise
+                            </a>
+                          </article>
+                        ) : null}
 
-                      {preparationActionClass ? (
-                        <article className="student-batch-plan-item">
-                          <div>
-                            <p className="student-batch-plan-label is-next">Preparation</p>
-                            <p className="student-batch-plan-main">
-                              Prepare: {preparationActionClass.title}
-                            </p>
-                            <p className="student-batch-plan-meta">
-                              {formatTimeRange(preparationActionClass.starts_at, preparationActionClass.ends_at)}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            className="student-batch-btn student-batch-btn-primary-outline"
-                            disabled={joinBusyMeetingId === preparationActionClass.zoom_meeting_id}
-                            onClick={() => handleJoinClass(preparationActionClass)}
-                          >
-                            View
-                          </button>
-                        </article>
-                      ) : null}
+                        {preparationActionClass ? (
+                          <article className="spx-bd-plan-card is-prepare">
+                            <div>
+                              <p className="spx-bd-plan-label">Preparation</p>
+                              <h4>Prepare: {preparationActionClass.title}</h4>
+                              <span>{formatTimeRange(preparationActionClass.starts_at, preparationActionClass.ends_at)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="spx-bd-plan-btn is-prepare"
+                              disabled={joinBusyMeetingId === preparationActionClass.zoom_meeting_id}
+                              onClick={() => handleJoinClass(preparationActionClass)}
+                            >
+                              View
+                            </button>
+                          </article>
+                        ) : null}
 
-                      {!immediateClassAction &&
-                      !assignmentAction &&
-                      !revisionActionClass &&
-                      !preparationActionClass ? (
-                        <p className="empty-state">No pending action items.</p>
-                      ) : null}
+                        {!immediateClassAction && !assignmentAction && !revisionActionClass && !preparationActionClass ? (
+                          <p className="spx-bd-empty">No pending action items for today.</p>
+                        ) : null}
+                      </div>
+                    </article>
+
+                    <article className="spx-bd-panel">
+                      <h3>Your Performance</h3>
+                      <div className="spx-bd-kpi-grid">
+                        <article className="spx-bd-kpi is-blue">
+                          <div className="spx-bd-kpi-icon"><TrendingUp size={18} /></div>
+                          <p>Overall Progress</p>
+                          <h4>{selectedBatchProgress}%</h4>
+                          <span>On track for completion</span>
+                        </article>
+                        <article className="spx-bd-kpi is-green">
+                          <div className="spx-bd-kpi-icon"><BarChart3 size={18} /></div>
+                          <p>Average Score</p>
+                          <h4>{selectedBatchAvgScore} / 10</h4>
+                          <span>Batch Avg: 6.4 / 10</span>
+                        </article>
+                        <article className="spx-bd-kpi is-purple">
+                          <div className="spx-bd-kpi-icon"><ClipboardCheck size={18} /></div>
+                          <p>Assignments</p>
+                          <h4>{selectedBatchSubmittedAssignments.length} / {selectedBatchAssignments.length || 0}</h4>
+                          <span>Submission consistency</span>
+                        </article>
+                        <article className="spx-bd-kpi is-amber">
+                          <div className="spx-bd-kpi-icon"><PieChart size={18} /></div>
+                          <p>Attendance</p>
+                          <h4>{selectedBatchAttendance}%</h4>
+                          <span>Keep above 80%</span>
+                        </article>
+                      </div>
+                    </article>
+                  </div>
+
+                  {/* ── Right column: Recent Activity ── */}
+                  <article className="spx-bd-panel spx-bd-activity-panel">
+                    <h3>Recent Activity</h3>
+                    <div className="spx-bd-activity-feed">
+                      {(() => {
+                        type ActivityEntry = { id: string; type: 'live' | 'completed' | 'upcoming' | 'assignment-submitted' | 'assignment-due'; title: string; description: string; time: Date; icon: 'video' | 'check' | 'calendar' | 'file' | 'clock' }
+
+                        const entries: ActivityEntry[] = []
+
+                        selectedBatchClasses.forEach((c) => {
+                          const status = getSessionStatus(c)
+                          if (status === 'live') {
+                            entries.push({ id: `cls-${c.id}`, type: 'live', title: c.title, description: `Class is live now · ${c.trainer_name}`, time: new Date(c.starts_at), icon: 'video' })
+                          } else if (status === 'completed') {
+                            entries.push({ id: `cls-${c.id}`, type: 'completed', title: c.title, description: `Class completed · ${c.trainer_name}${c.recording_url ? ' · Recording available' : ''}`, time: new Date(c.starts_at), icon: 'check' })
+                          } else {
+                            entries.push({ id: `cls-${c.id}`, type: 'upcoming', title: c.title, description: `Scheduled on ${new Date(c.starts_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${c.trainer_name}`, time: new Date(c.starts_at), icon: 'calendar' })
+                          }
+                        })
+
+                        selectedBatchAssignments.forEach((a) => {
+                          const sub = submissionByAssignmentId.get(a.id)
+                          if (sub?.submitted_at) {
+                            entries.push({ id: `asn-${a.id}`, type: 'assignment-submitted', title: a.title, description: `Assignment submitted${sub.marks != null ? ` · Score: ${sub.marks}/${a.max_marks ?? 10}` : ''}`, time: new Date(sub.submitted_at ?? a.due_at), icon: 'check' })
+                          } else {
+                            const now = new Date()
+                            const due = new Date(a.due_at)
+                            const overdue = due < now
+                            entries.push({ id: `asn-${a.id}`, type: 'assignment-due', title: a.title, description: overdue ? `Assignment overdue · Was due ${due.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : `Assignment due on ${due.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`, time: due, icon: overdue ? 'clock' : 'file' })
+                          }
+                        })
+
+                        entries.sort((a, b) => b.time.getTime() - a.time.getTime())
+
+                        if (!entries.length) return <p className="spx-bd-empty">No recent activity in this batch.</p>
+
+                        return entries.slice(0, 15).map((entry) => (
+                          <div key={entry.id} className={`spx-bd-activity-item is-${entry.type}`}>
+                            <div className="spx-bd-activity-dot">
+                              {entry.icon === 'video' && <Video size={13} />}
+                              {entry.icon === 'check' && <CheckCircle2 size={13} />}
+                              {entry.icon === 'calendar' && <CalendarDays size={13} />}
+                              {entry.icon === 'file' && <FileText size={13} />}
+                              {entry.icon === 'clock' && <Clock3 size={13} />}
+                            </div>
+                            <div className="spx-bd-activity-content">
+                              <p>{entry.title}</p>
+                              <span>{entry.description}</span>
+                            </div>
+                          </div>
+                        ))
+                      })()}
                     </div>
                   </article>
-
-                  <article className="student-batch-overview-card">
-                    <h3 className="student-batch-overview-title">Batch Overview</h3>
-                    <section className="student-batch-kpi-grid">
-                      <article className="student-batch-kpi-card kpi-blue">
-                        <div>
-                          <p className="student-batch-kpi-title">Overall Progress</p>
-                          <h4 className="student-batch-kpi-value">{selectedBatchProgress}%</h4>
-                          <p className="student-batch-kpi-sub">You're on track for completion</p>
-                        </div>
-                        <TrendingUp className="student-batch-kpi-icon" />
-                      </article>
-
-                      <article className="student-batch-kpi-card kpi-green">
-                        <div>
-                          <p className="student-batch-kpi-title">Average Score</p>
-                          <h4 className="student-batch-kpi-value">{selectedBatchAvgScore} / 10</h4>
-                          <p className="student-batch-kpi-sub">Batch Average: 6.4 / 10</p>
-                        </div>
-                        <BarChart3 className="student-batch-kpi-icon" />
-                      </article>
-
-                      <article className="student-batch-kpi-card kpi-purple">
-                        <div>
-                          <p className="student-batch-kpi-title">Assignments Completed</p>
-                          <h4 className="student-batch-kpi-value">
-                            {selectedBatchSubmittedAssignments.length} / {selectedBatchAssignments.length || 0}
-                          </h4>
-                          <p className="student-batch-kpi-sub">Submission consistency</p>
-                        </div>
-                        <ClipboardCheck className="student-batch-kpi-icon" />
-                      </article>
-
-                      <article className="student-batch-kpi-card kpi-yellow">
-                        <div>
-                          <p className="student-batch-kpi-title">Attendance</p>
-                          <h4 className="student-batch-kpi-value">{selectedBatchAttendance}%</h4>
-                          <p className="student-batch-kpi-sub">Keep attendance above 80%</p>
-                        </div>
-                        <PieChart className="student-batch-kpi-icon" />
-                      </article>
-                    </section>
-                  </article>
-                </div>
+                </section>
               ) : null}
 
               {batchDetailTab === 'classes' ? (
@@ -1775,9 +2981,6 @@ export function HomePage({ session }: HomePageProps) {
 
                   <div className="student-classes-section-head">
                     <h4><CalendarDays size={16} /> Upcoming Classes</h4>
-                    <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
-                      {upcomingClassesExpanded ? 'Show Less' : 'View All'}
-                    </button>
                   </div>
                   <article className="student-classes-table-card is-upcoming-table">
                     <table className="student-classes-table">
@@ -1817,7 +3020,6 @@ export function HomePage({ session }: HomePageProps) {
                             <tr key={item.id} className={status === 'live' ? 'is-live' : ''}>
                               <td>
                                 <div className={`student-classes-table-date weekday-${new Date(item.starts_at).getDay()}`}>
-                                  <span>{new Date(item.starts_at).toLocaleDateString([], { weekday: 'short' })}</span>
                                   <strong>{new Date(item.starts_at).getDate()}</strong>
                                   <small>{formatMonthShort(item.starts_at)}</small>
                                 </div>
@@ -1843,10 +3045,10 @@ export function HomePage({ session }: HomePageProps) {
                                 )}
                               </td>
                               <td>
-                                <div className="student-classes-actions">
+                                <div className="spx-class-actions">
                                   <button
                                     type="button"
-                                    className="join"
+                                    className="spx-act-join"
                                     disabled={joinBusyMeetingId === item.zoom_meeting_id}
                                     onClick={() => handleJoinClass(item)}
                                   >
@@ -1855,7 +3057,7 @@ export function HomePage({ session }: HomePageProps) {
                                   {showSubmitAssignment ? (
                                     <button
                                       type="button"
-                                      className="assignment"
+                                      className="spx-act-assignment"
                                       onClick={() => {
                                         openAssignmentDrawer(
                                           primaryClassAssignment,
@@ -1868,7 +3070,7 @@ export function HomePage({ session }: HomePageProps) {
                                       {submitAssignmentLabel}
                                     </button>
                                   ) : null}
-                                  <button type="button" className="calendar" onClick={() => handleAddToCalendar(item)}>
+                                  <button type="button" className="spx-act-calendar" onClick={() => handleAddToCalendar(item)}>
                                     <CalendarDays size={12} /> Add to Calendar
                                   </button>
                                 </div>
@@ -1879,18 +3081,12 @@ export function HomePage({ session }: HomePageProps) {
                       </tbody>
                     </table>
                     <div className="student-classes-table-foot">
-                      <p>Showing {Math.min(visibleUpcomingClassRows.length, 6)} of {upcomingClassTableRows.length} classes</p>
-                      <button type="button" onClick={() => setUpcomingClassesExpanded((prev) => !prev)}>
-                        {upcomingClassesExpanded ? 'Show Less' : 'View All'}
-                      </button>
+                      <p>Showing {Math.min(visibleUpcomingClassRows.length, upcomingClassTableRows.length)} of {upcomingClassTableRows.length} classes</p>
                     </div>
                   </article>
 
                   <div className="student-classes-section-head">
                     <h4><Clock3 size={16} /> Past Classes</h4>
-                    <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
-                      {pastClassesExpanded ? 'Show Less' : 'View All'}
-                    </button>
                   </div>
                   <article className="student-classes-table-card is-past-table">
                     <table className="student-classes-table past-table">
@@ -1928,7 +3124,6 @@ export function HomePage({ session }: HomePageProps) {
                               <tr key={item.id}>
                                 <td>
                                   <div className="student-classes-table-date is-neutral">
-                                    <span>{new Date(item.starts_at).toLocaleDateString([], { weekday: 'short' })}</span>
                                     <strong>{new Date(item.starts_at).getDate()}</strong>
                                     <small>{formatMonthShort(item.starts_at)}</small>
                                   </div>
@@ -1950,16 +3145,16 @@ export function HomePage({ session }: HomePageProps) {
                                   )}
                                 </td>
                                 <td>
-                                  <div className="student-classes-actions">
+                                  <div className="spx-class-actions">
                                     {item.recording_url ? (
-                                      <a href={item.recording_url} target="_blank" rel="noreferrer" className="watch">
+                                      <a href={item.recording_url} target="_blank" rel="noreferrer" className="spx-act-watch">
                                         <Play size={12} /> Watch Recording
                                       </a>
                                     ) : null}
                                     {showAssignmentAction ? (
                                       <button
                                         type="button"
-                                        className="assignment"
+                                        className="spx-act-assignment"
                                         onClick={() =>
                                           openAssignmentDrawer(
                                             primaryClassAssignment,
@@ -1980,12 +3175,41 @@ export function HomePage({ session }: HomePageProps) {
                         ))}
                       </tbody>
                     </table>
-                    <div className="student-classes-table-foot">
-                      <p>Showing {Math.min(visiblePastClassRows.length, 6)} of {pastClassTableRows.length} classes</p>
-                      <button type="button" onClick={() => setPastClassesExpanded((prev) => !prev)}>
-                        {pastClassesExpanded ? 'Show Less' : 'View All'}
-                      </button>
-                    </div>
+                    {pastClassTableRows.length > 0 ? (
+                      <div className="student-classes-table-foot lc-pagination-foot">
+                        <p>
+                          Showing {((pastClassesPage - 1) * PAST_CLASSES_PAGE_SIZE) + 1} to {Math.min(pastClassesPage * PAST_CLASSES_PAGE_SIZE, pastClassTableRows.length)} of {pastClassTableRows.length} classes
+                        </p>
+                        <div className="lc-pagination">
+                          <button
+                            type="button"
+                            className="lc-page-btn"
+                            disabled={pastClassesPage <= 1}
+                            onClick={() => setPastClassesPage(p => p - 1)}
+                          >
+                            <ChevronLeft size={14} />
+                          </button>
+                          {Array.from({ length: pastClassesTotalPages }, (_, i) => i + 1).map(pg => (
+                            <button
+                              key={pg}
+                              type="button"
+                              className={`lc-page-btn ${pg === pastClassesPage ? 'is-active' : ''}`}
+                              onClick={() => setPastClassesPage(pg)}
+                            >
+                              {pg}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="lc-page-btn"
+                            disabled={pastClassesPage >= pastClassesTotalPages}
+                            onClick={() => setPastClassesPage(p => p + 1)}
+                          >
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </article>
                 </section>
               ) : null}
@@ -2760,38 +3984,40 @@ export function HomePage({ session }: HomePageProps) {
 
         <section className="student-v2-focus-strip">{focusText}</section>
 
-        <section className="student-v2-continue">
-          <p className="student-v2-continue-title">Continue Learning</p>
-          <div className="student-v2-continue-body">
-            <div className="student-v2-continue-thumb">
-              <img src="/course-cover.png" alt="Course cover" />
-              <span className="student-v2-continue-play">
-                <PlayCircle size={18} />
-              </span>
-            </div>
-            <div className="student-v2-continue-meta">
-              <h3>{myBatches[0]?.batch_code ?? 'BAMAR19/26-MADHAV-MORNING'}</h3>
-              <p>Last activity: SDLC - Planning</p>
-              <div className="student-v2-progress-row">
-                <div className="student-v2-progress">
-                  <div style={{ width: `${progressPct}%` }} />
+        {myBatches.length > 0 && (
+          <section className="student-v2-continue">
+            <p className="student-v2-continue-title">Continue Learning</p>
+            <div className="student-v2-continue-body">
+              <div className="student-v2-continue-thumb">
+                <img src="/course-cover.png" alt="Course cover" />
+                <span className="student-v2-continue-play">
+                  <PlayCircle size={18} />
+                </span>
+              </div>
+              <div className="student-v2-continue-meta">
+                <h3>{myBatches[0]?.batch_code}</h3>
+                <p>Last activity: {allClasses.filter(c => new Date(c.starts_at) < new Date()).slice(-1)[0]?.title ?? 'No classes yet'}</p>
+                <div className="student-v2-progress-row">
+                  <div className="student-v2-progress">
+                    <div style={{ width: `${progressPct}%` }} />
+                  </div>
+                  <span>{progressPct}%</span>
                 </div>
-                <span>{progressPct}%</span>
+              </div>
+              <div className="student-v2-continue-cta">
+                <a
+                  className="student-v2-primary-btn"
+                  href={primaryContinueClass?.join_url ?? '#'}
+                  target={primaryContinueClass?.join_url ? '_blank' : undefined}
+                  rel={primaryContinueClass?.join_url ? 'noreferrer' : undefined}
+                >
+                  <Play size={13} />
+                  Continue Learning
+                </a>
               </div>
             </div>
-            <div className="student-v2-continue-cta">
-              <a
-                className="student-v2-primary-btn"
-                href={primaryContinueClass?.join_url ?? '#'}
-                target={primaryContinueClass?.join_url ? '_blank' : undefined}
-                rel={primaryContinueClass?.join_url ? 'noreferrer' : undefined}
-              >
-                <Play size={13} />
-                Continue Learning
-              </a>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         <section className="student-v2-grid-two">
           <article className="student-v2-panel">
@@ -2911,24 +4137,24 @@ export function HomePage({ session }: HomePageProps) {
           <article className="student-v2-kpi-card">
             <p>Overall Progress</p>
             <h3>{progressPct}%</h3>
-            <span>You're above batch average</span>
+            <span>{pastClassesTotal} of {allClasses.length} classes completed</span>
           </article>
           <article className="student-v2-kpi-card">
             <p>Average Score</p>
             <h3>{avgScore} / 10</h3>
-            <span>Batch average: 6.4/10</span>
+            <span>{scoredSubmissions.length ? `Based on ${scoredSubmissions.length} graded` : 'No graded assignments yet'}</span>
           </article>
           <article className="student-v2-kpi-card">
             <p>Assignments Completed</p>
             <h3>
-              {submittedCount} / {Math.max(assignments.length, 1)}
+              {submittedCount} / {assignments.length}
             </h3>
-            <span>Keep submissions on time</span>
+            <span>{assignments.length - submittedCount > 0 ? `${assignments.length - submittedCount} pending` : assignments.length ? 'All submitted' : 'No assignments yet'}</span>
           </article>
           <article className="student-v2-kpi-card">
             <p>Attendance</p>
             <h3>{attendancePct}%</h3>
-            <span>Great consistency this week</span>
+            <span>{presentCount} of {pastClassesTotal} classes attended</span>
           </article>
         </section>
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { FormEvent } from 'react'
 import {
   Building2,
@@ -493,7 +494,7 @@ export function AdminPlacementCellPage() {
   }
 
   if (loading) {
-    return <div className="center-screen dashboard-loading">Loading placement cell...</div>
+    return <SpxLoader label="Loading placement cell…" />
   }
 
   return (
@@ -509,10 +510,10 @@ export function AdminPlacementCellPage() {
 
         <nav className="batch-detail-tabs admin-batch-detail-tabs placement-tabs">
           {[
-            { id: 'interviews', label: 'Interviews' },
-            { id: 'mock', label: 'Mock Interviews' },
-            { id: 'placements', label: 'Placements' },
-            { id: 'reports', label: 'Reports' },
+            { id: 'interviews', label: 'Interviews', count: interviews.length },
+            { id: 'mock', label: 'Mock Interviews', count: mockInterviews.length },
+            { id: 'placements', label: 'Placements', count: placements.length },
+            { id: 'reports', label: 'Reports', count: null },
           ].map((item) => (
             <button
               key={item.id}
@@ -521,6 +522,7 @@ export function AdminPlacementCellPage() {
               onClick={() => setTab(item.id as PlacementTab)}
             >
               {item.label}
+              {item.count != null ? <span className="placement-tab-count">{item.count}</span> : null}
             </button>
           ))}
         </nav>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SpxLoader } from '../components/SpxLoader'
 import type { Session } from '@supabase/supabase-js'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -10,9 +11,7 @@ import {
   Handshake,
   LifeBuoy,
   BarChart3,
-  UserCog,
   Settings,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Bell,
@@ -28,6 +27,7 @@ import {
   Upload,
   PlusCircle,
   X,
+  BookOpen,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { AdminStudentsPage } from './AdminStudentsPage'
@@ -43,6 +43,7 @@ import { AdminLiveClassDetailPage } from './AdminLiveClassDetailPage'
 import { AdminPlaceholderPage } from './AdminPlaceholderPage'
 import { AdminPlacementCellPage } from './AdminPlacementCellPage'
 import { AdminTrainersPage } from './AdminTrainersPage'
+import { AdminTrainerDetailPage } from './AdminTrainerDetailPage'
 
 type AdminHomePageProps = {
   session: Session
@@ -93,7 +94,7 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [usersNavOpen, setUsersNavOpen] = useState(false)
+  const [, setUsersNavOpen] = useState(false)
   const [upcomingClasses, setUpcomingClasses] = useState<DashboardClass[]>([])
   const [studentCount, setStudentCount] = useState(0)
   const [batchCount, setBatchCount] = useState(0)
@@ -625,6 +626,9 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
   const studentDetailMatch = adminPath.match(/^\/admin\/students\/([^/]+)\/?$/)
   const studentIdFromPath = studentDetailMatch?.[1] ?? null
 
+  const trainerDetailMatch = adminPath.match(/^\/admin\/users\/trainers\/([^/]+)\/?$/)
+  const trainerIdFromPath = trainerDetailMatch?.[1] ?? null
+
   type AdminSection =
     | 'overview'
     | 'students'
@@ -634,6 +638,7 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
     | 'batch-create-class'
     | 'assignment-detail'
     | 'class-detail'
+    | 'trainer-detail'
     | 'communication'
     | 'placement'
     | 'support'
@@ -650,6 +655,8 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
         ? 'class-detail'
     : batchIdFromPath
     ? 'batch-detail'
+    : trainerIdFromPath
+      ? 'trainer-detail'
     : studentIdFromPath
       ? 'student-detail'
       : adminPath === '/admin/students'
@@ -818,7 +825,7 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
   }, [searchText])
 
   if (loading) {
-    return <div className="center-screen dashboard-loading">Loading admin overview...</div>
+    return <SpxLoader label="Loading admin overview…" />
   }
 
   if (error) {
@@ -847,134 +854,80 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
             <span>Admin Panel</span>
           </div>
           <nav className="sidebar-nav">
+            <p className="sidebar-section-label">Academics</p>
             <button
-              className={`sidebar-item ${
-                section === 'overview' ? 'active' : ''
-              }`}
-              onClick={() => {
-                navigate('/admin/overview')
-              }}
+              className={`sidebar-item ${section === 'overview' ? 'active' : ''}`}
+              onClick={() => navigate('/admin/overview')}
             >
-              <LayoutDashboard size={16} />
+              <LayoutDashboard size={18} />
               Overview
             </button>
             <button
-              className={`sidebar-item ${
-                section === 'students' || section === 'student-detail'
-                  ? 'active'
-                  : ''
-              }`}
-              onClick={() => {
-                navigate('/admin/students')
-              }}
+              className={`sidebar-item ${section === 'students' || section === 'student-detail' ? 'active' : ''}`}
+              onClick={() => navigate('/admin/students')}
             >
-              <Users size={16} />
+              <Users size={18} />
               Students
             </button>
             <button
-              className={`sidebar-item ${
-                section === 'batches' || section === 'batch-detail'
-                  ? 'active'
-                  : ''
-              }`}
-              onClick={() => {
-                navigate('/admin/batches')
-              }}
+              className={`sidebar-item ${section === 'batches' || section === 'batch-detail' ? 'active' : ''}`}
+              onClick={() => navigate('/admin/batches')}
             >
-              <CalendarDays size={16} />
+              <BookOpen size={18} />
               Batches
             </button>
+
+            <p className="sidebar-section-label">Operations</p>
             <button
-              className={`sidebar-item ${
-                section === 'communication' ? 'active' : ''
-              }`}
-              type="button"
-              onClick={() => navigate('/admin/communication')}
-            >
-              <MessageSquare size={16} />
-              Communication
-            </button>
-            <button
-              className={`sidebar-item ${
-                section === 'placement' ? 'active' : ''
-              }`}
+              className={`sidebar-item ${section === 'placement' ? 'active' : ''}`}
               type="button"
               onClick={() => navigate('/admin/placement')}
             >
-              <Handshake size={16} />
+              <Handshake size={18} />
               Placement Cell
             </button>
             <button
-              className={`sidebar-item ${
-                section === 'support' ? 'active' : ''
-              }`}
+              className={`sidebar-item ${section === 'support' ? 'active' : ''}`}
               type="button"
               onClick={() => navigate('/admin/support')}
             >
-              <LifeBuoy size={16} />
+              <LifeBuoy size={18} />
               Support
             </button>
             <button
-              className={`sidebar-item ${
-                section === 'reports' ? 'active' : ''
-              }`}
+              className={`sidebar-item ${section === 'communication' ? 'active' : ''}`}
+              type="button"
+              onClick={() => navigate('/admin/communication')}
+            >
+              <MessageSquare size={18} />
+              Communication
+            </button>
+
+            <p className="sidebar-section-label">Insights</p>
+            <button
+              className={`sidebar-item ${section === 'reports' ? 'active' : ''}`}
               type="button"
               onClick={() => navigate('/admin/reports')}
             >
-              <BarChart3 size={16} />
+              <BarChart3 size={18} />
               Reports
             </button>
 
-            <div className="sidebar-nav-group">
-              <button
-                type="button"
-                className={`sidebar-item sidebar-parent ${
-                  section === 'users-trainers' || section === 'users-admins'
-                    ? 'active'
-                    : ''
-                }`}
-                onClick={() => setUsersNavOpen((open) => !open)}
-              >
-                <UserCog size={16} />
-                <span className="sidebar-parent-label">Users</span>
-                {usersNavOpen ? (
-                  <ChevronDown size={16} className="sidebar-chevron" />
-                ) : (
-                  <ChevronRight size={16} className="sidebar-chevron" />
-                )}
-              </button>
-              {usersNavOpen ? (
-                <div className="sidebar-subnav">
-                  <button
-                    type="button"
-                    className={`sidebar-item sidebar-subitem ${
-                      section === 'users-trainers' ? 'active' : ''
-                    }`}
-                    onClick={() => navigate('/admin/users/trainers')}
-                  >
-                    Trainers
-                  </button>
-                  <button
-                    type="button"
-                    className={`sidebar-item sidebar-subitem ${
-                      section === 'users-admins' ? 'active' : ''
-                    }`}
-                    onClick={() => navigate('/admin/users/admins')}
-                  >
-                    Admins
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
+            <p className="sidebar-section-label">System</p>
             <button
-              className={`sidebar-item ${
-                section === 'settings' ? 'active' : ''
-              }`}
+              className={`sidebar-item ${section === 'users-trainers' || section === 'trainer-detail' || section === 'users-admins' ? 'active' : ''}`}
+              type="button"
+              onClick={() => navigate('/admin/users/trainers')}
+            >
+              <Users size={18} />
+              Users
+            </button>
+            <button
+              className={`sidebar-item ${section === 'settings' ? 'active' : ''}`}
               type="button"
               onClick={() => navigate('/admin/settings')}
             >
-              <Settings size={16} />
+              <Settings size={18} />
               Settings
             </button>
           </nav>
@@ -996,7 +949,9 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
           section === 'student-detail' ? 'student-content-wide' : ''
         } ${isBatchWorkspaceView ? 'admin-batch-workspace-content' : ''} ${
           section === 'placement' ? 'admin-placement-shell' : ''
-        } ${section === 'overview' ? 'admin-ds-content' : ''}`}
+        } ${section === 'overview' ? 'admin-ds-content' : ''} ${
+          section === 'users-trainers' || section === 'trainer-detail' ? 'admin-trainers-shell' : ''
+        }`}
       >
         {section === 'overview' ? (
           <>
@@ -1118,13 +1073,13 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
                     </article>
                     <article className="admin-mc-kpi-card">
                       <p>Classes Conducted</p>
-                  <h3>{classesConductedMonthCount}</h3>
+                      <h3>{classesConductedMonthCount}</h3>
                       <span>this month</span>
                       <div className="sparkline purple"><i /><i /><i /><i /><i /></div>
                     </article>
                     <article className="admin-mc-kpi-card">
                       <p>Average Attendance</p>
-                  <h3>{averageAttendancePct}%</h3>
+                      <h3>{averageAttendancePct}%</h3>
                       <span>this month</span>
                       <div className="sparkline orange"><i /><i /><i /><i /><i /></div>
                     </article>
@@ -1320,6 +1275,11 @@ export function AdminHomePage({ session }: AdminHomePageProps) {
           <AdminPlaceholderPage title="Support" />
         ) : section === 'reports' ? (
           <AdminPlaceholderPage title="Reports" />
+        ) : section === 'trainer-detail' && trainerIdFromPath ? (
+          <AdminTrainerDetailPage
+            trainerId={trainerIdFromPath}
+            onBack={() => navigate('/admin/users/trainers')}
+          />
         ) : section === 'users-trainers' ? (
           <AdminTrainersPage />
         ) : section === 'users-admins' ? (
