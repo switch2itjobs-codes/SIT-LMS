@@ -4,6 +4,8 @@ import { env } from './config/env.js'
 import { adminStudentsRouter } from './routes/adminStudents.js'
 import { studentProfileRouter } from './routes/studentProfile.js'
 import { zoomRouter } from './routes/zoom.js'
+import { fileUploadRouter } from './routes/fileUpload.js'
+import { classesRouter } from './routes/classes.js'
 
 export const app = express()
 
@@ -54,6 +56,8 @@ app.get('/health', (_req, res) => {
 app.use('/api/admin/students', adminStudentsRouter)
 app.use('/api/student/profile', studentProfileRouter)
 app.use('/api/zoom', zoomRouter)
+app.use('/api/upload', fileUploadRouter)
+app.use('/api/classes', classesRouter)
 
 app.use((error, _req, res, _next) => {
   // eslint-disable-next-line no-console

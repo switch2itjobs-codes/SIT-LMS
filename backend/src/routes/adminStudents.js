@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
+import { uploadToR2 } from '../lib/r2.js'
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -39,49 +40,6 @@ const uploadAvatar = multer({
 
 export const adminStudentsRouter = express.Router()
 
-async function ensureStudentAvatarsBucket() {
-  const { data: buckets, error: listErr } = await supabaseAdmin.storage.listBuckets()
-  if (listErr) {
-    throw listErr
-  }
-  const exists = buckets?.some((b) => b.id === 'student-avatars' || b.name === 'student-avatars')
-  if (exists) {
-    return
-  }
-  const { error: createErr } = await supabaseAdmin.storage.createBucket('student-avatars', {
-    public: true,
-    fileSizeLimit: 2 * 1024 * 1024, // 2 MB
-  })
-  if (
-    createErr &&
-    !String(createErr.message ?? '').toLowerCase().includes('already') &&
-    !String(createErr.message ?? '').toLowerCase().includes('exists')
-  ) {
-    throw createErr
-  }
-}
-
-async function ensureStudentResumesBucket() {
-  const { data: buckets, error: listErr } = await supabaseAdmin.storage.listBuckets()
-  if (listErr) {
-    throw listErr
-  }
-  const exists = buckets?.some((b) => b.id === 'student-resumes' || b.name === 'student-resumes')
-  if (exists) {
-    return
-  }
-  const { error: createErr } = await supabaseAdmin.storage.createBucket('student-resumes', {
-    public: true,
-    fileSizeLimit: 52428800,
-  })
-  if (
-    createErr &&
-    !String(createErr.message ?? '').toLowerCase().includes('already') &&
-    !String(createErr.message ?? '').toLowerCase().includes('exists')
-  ) {
-    throw createErr
-  }
-}
 
 adminStudentsRouter.post(
   '/:studentId/resume',
@@ -110,22 +68,10 @@ adminStudentsRouter.post(
         return res.status(404).json({ error: 'Student not found.' })
       }
 
-      await ensureStudentResumesBucket()
-
       const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
-      const objectPath = `${studentId}/${Date.now()}-${cleanName}`
-      const { error: upErr } = await supabaseAdmin.storage
-        .from('student-resumes')
-        .upload(objectPath, req.file.buffer, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: req.file.mimetype || 'application/octet-stream',
-        })
-      if (upErr) {
-        return res.status(500).json({ error: upErr.message })
-      }
-      const { data: pub } = supabaseAdmin.storage.from('student-resumes').getPublicUrl(objectPath)
-      return res.json({ resume_url: pub.publicUrl })
+      const resumeKey = `${studentId}/${Date.now()}-${cleanName}`
+      const resumeUrl = await uploadToR2('resumes', resumeKey, req.file.buffer, req.file.mimetype || 'application/octet-stream')
+      return res.json({ resume_url: resumeUrl })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Upload failed.'
       return res.status(500).json({ error: msg })
@@ -160,29 +106,9 @@ adminStudentsRouter.post(
         return res.status(404).json({ error: 'Student not found.' })
       }
 
-      await ensureStudentAvatarsBucket()
-
       const ext = req.file.originalname.split('.').pop()?.toLowerCase() || 'jpg'
-      const objectPath = `${studentId}/avatar-${Date.now()}.${ext}`
-      const { error: upErr } = await supabaseAdmin.storage
-        .from('student-avatars')
-        .upload(objectPath, req.file.buffer, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: req.file.mimetype || 'image/jpeg',
-        })
-      if (upErr) {
-        return res.status(500).json({ error: upErr.message })
-      }
-      const { data: pub } = supabaseAdmin.storage.from('student-avatars').getPublicUrl(objectPath)
-      const avatarUrl = pub.publicUrl
-
-      // Ensure avatar_url column exists (self-healing migration)
-      await supabaseAdmin.rpc('exec_sql', {
-        query: 'ALTER TABLE public.students ADD COLUMN IF NOT EXISTS avatar_url text',
-      }).catch(() => {
-        // rpc may not exist — try direct approach, column might already exist
-      })
+      const avatarKey = `${studentId}/avatar-${Date.now()}.${ext}`
+      const avatarUrl = await uploadToR2('avatars', avatarKey, req.file.buffer, req.file.mimetype || 'image/jpeg')
 
       // Save avatar_url on the student record
       const { error: saveErr } = await supabaseAdmin
@@ -191,7 +117,6 @@ adminStudentsRouter.post(
         .eq('id', studentId)
       if (saveErr) {
         console.warn('Could not save avatar_url on student:', saveErr.message)
-        // Still return the URL — the upload succeeded
       }
 
       return res.json({ avatar_url: avatarUrl })

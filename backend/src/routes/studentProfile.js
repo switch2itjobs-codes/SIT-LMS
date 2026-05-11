@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
+import { uploadToR2 } from '../lib/r2.js'
 
 const uploadResume = multer({
   storage: multer.memoryStorage(),
@@ -36,13 +37,6 @@ const uploadAvatar = multer({
     cb(new Error('Only JPG, PNG, or WebP images are allowed.'))
   },
 })
-
-async function ensureBucket(name, opts) {
-  const { data: buckets } = await supabaseAdmin.storage.listBuckets()
-  if (buckets?.some((b) => b.id === name || b.name === name)) return
-  const { error } = await supabaseAdmin.storage.createBucket(name, opts)
-  if (error && !String(error.message ?? '').toLowerCase().includes('exist')) throw error
-}
 
 export const studentProfileRouter = express.Router()
 
@@ -166,37 +160,25 @@ studentProfileRouter.post('/signup', (req, res, next) => {
 
     const studentId = studentData.id
 
-    // Upload avatar if provided
+    // Upload avatar to R2 if provided
     const avatarFile = req.files?.['avatar']?.[0]
     if (avatarFile) {
       try {
-        await ensureBucket('student-avatars', { public: true, fileSizeLimit: 2 * 1024 * 1024 })
         const ext = avatarFile.originalname.split('.').pop()?.toLowerCase() || 'jpg'
-        const avatarPath = `${studentId}/avatar-${Date.now()}.${ext}`
-        const { error: upErr } = await supabaseAdmin.storage.from('student-avatars').upload(avatarPath, avatarFile.buffer, {
-          cacheControl: '3600', upsert: true, contentType: avatarFile.mimetype || 'image/jpeg',
-        })
-        if (!upErr) {
-          const { data: pub } = supabaseAdmin.storage.from('student-avatars').getPublicUrl(avatarPath)
-          await supabaseAdmin.from('students').update({ avatar_url: pub.publicUrl }).eq('id', studentId)
-        }
+        const avatarKey = `${studentId}/avatar-${Date.now()}.${ext}`
+        const avatarUrl = await uploadToR2('avatars', avatarKey, avatarFile.buffer, avatarFile.mimetype || 'image/jpeg')
+        await supabaseAdmin.from('students').update({ avatar_url: avatarUrl }).eq('id', studentId)
       } catch { /* ignore avatar errors */ }
     }
 
-    // Upload resume if provided
+    // Upload resume to R2 if provided
     const resumeFile = req.files?.['resume']?.[0]
     if (resumeFile) {
       try {
-        await ensureBucket('student-resumes', { public: true, fileSizeLimit: 52428800 })
         const cleanName = resumeFile.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
-        const resumePath = `${studentId}/${Date.now()}-${cleanName}`
-        const { error: upErr } = await supabaseAdmin.storage.from('student-resumes').upload(resumePath, resumeFile.buffer, {
-          cacheControl: '3600', upsert: true, contentType: resumeFile.mimetype || 'application/octet-stream',
-        })
-        if (!upErr) {
-          const { data: pub } = supabaseAdmin.storage.from('student-resumes').getPublicUrl(resumePath)
-          await supabaseAdmin.from('students').update({ resume_url: pub.publicUrl }).eq('id', studentId)
-        }
+        const resumeKey = `${studentId}/${Date.now()}-${cleanName}`
+        const resumeUrl = await uploadToR2('resumes', resumeKey, resumeFile.buffer, resumeFile.mimetype || 'application/octet-stream')
+        await supabaseAdmin.from('students').update({ resume_url: resumeUrl }).eq('id', studentId)
       } catch { /* ignore resume errors */ }
     }
 
@@ -221,7 +203,6 @@ studentProfileRouter.post(
     try {
       if (!req.file?.buffer) return res.status(400).json({ error: 'Missing file.' })
 
-      // Find student record by auth user id
       const userId = req.auth.user.id
       const { data: student, error: stErr } = await supabaseAdmin
         .from('students')
@@ -230,23 +211,10 @@ studentProfileRouter.post(
         .maybeSingle()
       if (stErr || !student) return res.status(404).json({ error: 'Student not found.' })
 
-      await ensureBucket('student-resumes', { public: true, fileSizeLimit: 52428800 })
-
       const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')
-      const objectPath = `${student.id}/${Date.now()}-${cleanName}`
-      const { error: upErr } = await supabaseAdmin.storage
-        .from('student-resumes')
-        .upload(objectPath, req.file.buffer, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: req.file.mimetype || 'application/octet-stream',
-        })
-      if (upErr) return res.status(500).json({ error: upErr.message })
+      const resumeKey = `${student.id}/${Date.now()}-${cleanName}`
+      const resumeUrl = await uploadToR2('resumes', resumeKey, req.file.buffer, req.file.mimetype || 'application/octet-stream')
 
-      const { data: pub } = supabaseAdmin.storage.from('student-resumes').getPublicUrl(objectPath)
-      const resumeUrl = pub.publicUrl
-
-      // Save resume_url on student record
       await supabaseAdmin.from('students').update({ resume_url: resumeUrl, updated_at: new Date().toISOString() }).eq('id', student.id)
 
       return res.json({ resume_url: resumeUrl })
@@ -279,21 +247,9 @@ studentProfileRouter.post(
         .maybeSingle()
       if (stErr || !student) return res.status(404).json({ error: 'Student not found.' })
 
-      await ensureBucket('student-avatars', { public: true, fileSizeLimit: 2 * 1024 * 1024 })
-
       const ext = req.file.originalname.split('.').pop()?.toLowerCase() || 'jpg'
-      const objectPath = `${student.id}/avatar-${Date.now()}.${ext}`
-      const { error: upErr } = await supabaseAdmin.storage
-        .from('student-avatars')
-        .upload(objectPath, req.file.buffer, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: req.file.mimetype || 'image/jpeg',
-        })
-      if (upErr) return res.status(500).json({ error: upErr.message })
-
-      const { data: pub } = supabaseAdmin.storage.from('student-avatars').getPublicUrl(objectPath)
-      const avatarUrl = pub.publicUrl
+      const avatarKey = `${student.id}/avatar-${Date.now()}.${ext}`
+      const avatarUrl = await uploadToR2('avatars', avatarKey, req.file.buffer, req.file.mimetype || 'image/jpeg')
 
       await supabaseAdmin.from('students').update({ avatar_url: avatarUrl, updated_at: new Date().toISOString() }).eq('id', student.id)
 

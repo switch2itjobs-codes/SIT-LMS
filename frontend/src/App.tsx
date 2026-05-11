@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import './App.css'
+import './styles/mobile.css'
 import { SpxLoader } from './components/SpxLoader'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
 import { AdminHomePage } from './pages/AdminHomePage'
+
+// Lazy-load LiveClassPage so the ~3 MB Zoom Meeting SDK isn't in the main bundle
+const LiveClassPage = lazy(() => import('./pages/LiveClassPage'))
+const ClassDetailPage = lazy(() => import('./pages/ClassDetailPage'))
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -81,6 +86,30 @@ function App() {
               />
             ) : (
               <SignupPage />
+            )
+          }
+        />
+        <Route
+          path="/classes/:classId/live"
+          element={
+            session ? (
+              <Suspense fallback={<SpxLoader />}>
+                <LiveClassPage />
+              </Suspense>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classes/:classId"
+          element={
+            session ? (
+              <Suspense fallback={<SpxLoader />}>
+                <ClassDetailPage />
+              </Suspense>
+            ) : (
+              <Navigate to="/login" replace />
             )
           }
         />

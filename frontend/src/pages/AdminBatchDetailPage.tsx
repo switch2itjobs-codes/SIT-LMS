@@ -33,6 +33,7 @@ import {
   ChevronLeft,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { getBackendOrigin } from '../lib/backendOrigin'
 import { AdminStudentsPage } from './AdminStudentsPage'
 import { BatchCommunityChat } from '../components/BatchCommunityChat/BatchCommunityChat'
 import {
@@ -1613,13 +1614,19 @@ export function AdminBatchDetailPage({
       let attachmentUrl: string | null = null
       if (announcementAttachmentFile) {
         const safeName = announcementAttachmentFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-        const objectPath = `batch-${batch.id}/announcements/${Date.now()}-${safeName}`
-        const { error: uploadError } = await supabase.storage
-          .from('batch-community-chat')
-          .upload(objectPath, announcementAttachmentFile, { upsert: false })
-        if (uploadError) throw uploadError
-        const { data: publicData } = supabase.storage.from('batch-community-chat').getPublicUrl(objectPath)
-        attachmentUrl = publicData.publicUrl ?? null
+        const fd = new FormData()
+        fd.append('file', announcementAttachmentFile)
+        fd.append('folder', 'chat')
+        fd.append('path', `batch-${batch.id}/announcements/${Date.now()}-${safeName}`)
+        const tok = (await supabase.auth.getSession()).data.session?.access_token
+        const upRes = await fetch(`${getBackendOrigin()}/api/upload`, {
+          method: 'POST',
+          headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+          body: fd,
+        })
+        if (!upRes.ok) throw new Error('Upload failed')
+        const upBody = await upRes.json()
+        attachmentUrl = upBody.url ?? null
       }
       const { data, error } = await supabase
         .from('announcements')

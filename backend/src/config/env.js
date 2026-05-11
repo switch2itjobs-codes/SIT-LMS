@@ -9,6 +9,9 @@ const requiredKeys = [
   'ZOOM_CLIENT_ID',
   'ZOOM_CLIENT_SECRET',
   'ZOOM_WEBHOOK_SECRET_TOKEN',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
 ]
 
 for (const key of requiredKeys) {
@@ -25,6 +28,8 @@ export const env = {
   zoomClientId: process.env.ZOOM_CLIENT_ID,
   zoomClientSecret: process.env.ZOOM_CLIENT_SECRET,
   zoomWebhookSecretToken: process.env.ZOOM_WEBHOOK_SECRET_TOKEN,
+  zoomSdkKey: process.env.ZOOM_SDK_KEY ?? process.env.ZOOM_CLIENT_ID,
+  zoomSdkSecret: process.env.ZOOM_SDK_SECRET ?? process.env.ZOOM_CLIENT_SECRET,
   zoomBaseUrl: process.env.ZOOM_BASE_URL ?? 'https://api.zoom.us/v2',
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://localhost:5173',
   allowedOrigins: (process.env.APP_ALLOWED_ORIGINS ?? process.env.APP_BASE_URL ?? 'http://localhost:5173')

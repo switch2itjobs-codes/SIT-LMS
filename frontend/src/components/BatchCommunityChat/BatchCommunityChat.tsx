@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Paperclip, Send, Smile } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { getBackendOrigin } from '../../lib/backendOrigin'
 
 type BatchCommunityChatProps = {
   batchId: string
@@ -339,16 +340,19 @@ export function BatchCommunityChat({ batchId, senderRole, senderName }: BatchCom
         }
 
         const safeName = sanitizeFileName(file.name)
-        const objectPath = `batch-${batchId}/${Date.now()}-${safeName}`
-
-        const { error: uploadError } = await supabase.storage
-          .from('batch-community-chat')
-          .upload(objectPath, file, { upsert: false })
-
-        if (uploadError) throw uploadError
-
-        const { data: publicData } = supabase.storage.from('batch-community-chat').getPublicUrl(objectPath)
-        attachmentUrl = publicData.publicUrl ?? null
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('folder', 'chat')
+        fd.append('path', `batch-${batchId}/${Date.now()}-${safeName}`)
+        const tok = (await supabase.auth.getSession()).data.session?.access_token
+        const upRes = await fetch(`${getBackendOrigin()}/api/upload`, {
+          method: 'POST',
+          headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+          body: fd,
+        })
+        if (!upRes.ok) throw new Error('Upload failed')
+        const upBody = await upRes.json()
+        attachmentUrl = upBody.url ?? null
         attachmentName = file.name
         attachmentSizeBytes = file.size
       }

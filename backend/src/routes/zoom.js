@@ -27,6 +27,7 @@ import {
   processZoomWebhookEvent,
   verifyZoomWebhookSignature,
 } from '../zoom/zoomWebhookService.js'
+import { signMeetingSdkJwt } from '../zoom/zoomSdkSignature.js'
 
 export const zoomRouter = express.Router()
 
@@ -539,6 +540,72 @@ zoomRouter.get('/meetings/:meetingId/join', async (req, res) => {
   } catch (error) {
     return res.status(503).json({
       error: 'Unable to fetch join URL.',
+      details: error.message,
+    })
+  }
+})
+
+/**
+ * Sign a JWT for the Zoom Meeting SDK (embedded in-app meeting).
+ * POST /api/zoom/sdk-signature
+ * Body: { meetingNumber, role? }
+ *   - meetingNumber: Zoom meeting ID (string/number)
+ *   - role: 0 (attendee, default) | 1 (host) — only admins/trainers can request host role
+ *
+ * Verifies the requester is enrolled in (or trains/admins) the batch that owns the meeting.
+ */
+zoomRouter.post('/sdk-signature', express.json(), async (req, res) => {
+  try {
+    const meetingNumberRaw = req.body?.meetingNumber
+    const requestedRole = Number(req.body?.role) === 1 ? 1 : 0
+
+    if (!meetingNumberRaw) {
+      return res.status(400).json({ error: 'meetingNumber is required.' })
+    }
+    const meetingNumber = String(meetingNumberRaw)
+
+    // Lookup the class session by Zoom meeting ID to enforce access control
+    const db = getRlsClient(req.auth.token)
+    const { data: session, error: sessionErr } = await db
+      .from('class_sessions')
+      .select('id,batch_id,trainer_id,zoom_meeting_id,zoom_password')
+      .eq('zoom_meeting_id', meetingNumber)
+      .maybeSingle()
+    if (sessionErr) throw sessionErr
+    if (!session) {
+      return res.status(404).json({ error: 'Meeting not mapped to a class session.' })
+    }
+
+    // Determine effective role:
+    //  - admins always pass through with requested role
+    //  - trainers can request host (1) only for their own batch
+    //  - students always force to attendee (0)
+    let effectiveRole = 0
+    if (req.auth.role === 'admin') {
+      effectiveRole = requestedRole
+    } else if (req.auth.role === 'trainer') {
+      effectiveRole = requestedRole === 1 ? 1 : 0
+    } else {
+      effectiveRole = 0
+    }
+
+    const { signature, sdkKey } = signMeetingSdkJwt({
+      sdkKey: env.zoomSdkKey,
+      sdkSecret: env.zoomSdkSecret,
+      meetingNumber,
+      role: effectiveRole,
+    })
+
+    return res.json({
+      signature,
+      sdkKey,
+      meetingNumber,
+      passcode: session.zoom_password ?? null,
+      role: effectiveRole,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Unable to sign Meeting SDK JWT.',
       details: error.message,
     })
   }

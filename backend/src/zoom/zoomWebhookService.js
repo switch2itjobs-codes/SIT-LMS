@@ -1,11 +1,14 @@
 import crypto from 'node:crypto'
 import { env } from '../config/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
-import { getMeetingParticipants } from './zoomReportsService.js'
+import { getMeetingParticipants, getMeetingReport } from './zoomReportsService.js'
 import {
   getRecordingForMeeting,
   setMeetingRecordingNoPasscode,
 } from './zoomRecordingService.js'
+import { getPastMeetingPolls } from './zoomPollsService.js'
+import { fetchAndParseZoomChatFile } from './zoomChatParser.js'
+import { getAccessToken as getZoomAccessToken } from './zoomTokenManager.js'
 
 function hmacHex(secret, value) {
   return crypto.createHmac('sha256', secret).update(value).digest('hex')
@@ -237,6 +240,140 @@ async function syncRecordingsForSession(
       )
     }
   }
+
+  // Capture chat messages from the recording's chat file (if present)
+  const chatFile = files.find(
+    (f) => f.file_type === 'CHAT' || f.file_type === 'CC' || f.recording_type === 'chat_file',
+  )
+  if (chatFile?.download_url) {
+    try {
+      await syncChatFromRecordingFile(
+        classSessionId,
+        String(zoomMeetingId ?? ''),
+        chatFile,
+      )
+    } catch (error) {
+      console.warn('Failed to capture chat from recording file:', error.message)
+    }
+  }
+}
+
+/**
+ * Download Zoom's chat file (from a recording) and insert one row per message
+ * into class_chat_messages.
+ */
+async function syncChatFromRecordingFile(classSessionId, zoomMeetingId, chatFile) {
+  const token = await getZoomAccessToken()
+  const meetingStart = chatFile.recording_start
+    ? new Date(chatFile.recording_start)
+    : new Date()
+  const messages = await fetchAndParseZoomChatFile(
+    chatFile.download_url,
+    token,
+    meetingStart,
+  )
+  if (!messages.length) return
+
+  const rows = messages.map((m) => ({
+    class_session_id: classSessionId,
+    zoom_meeting_id: zoomMeetingId || null,
+    sender_name: m.sender_name,
+    message_text: m.message_text,
+    sent_at: m.sent_at,
+    source: 'recording_file',
+  }))
+
+  const { error } = await supabaseAdmin.from('class_chat_messages').insert(rows)
+  if (error) {
+    // Ignore unique-violation noise if we re-run on the same meeting
+    console.warn('class_chat_messages insert (recording):', error.message)
+  }
+}
+
+/**
+ * Pull poll questions + responses from Zoom REST and upsert into class_polls.
+ */
+async function syncPollsForSession(classSessionId, zoomMeetingId, meetingUuid) {
+  if (!zoomMeetingId && !meetingUuid) return
+  const polls = await getPastMeetingPolls(zoomMeetingId || meetingUuid)
+  if (!polls) return
+
+  const questions = Array.isArray(polls.questions) ? polls.questions : []
+  if (!questions.length) return
+
+  const row = {
+    class_session_id: classSessionId,
+    zoom_meeting_id: zoomMeetingId ? String(zoomMeetingId) : null,
+    zoom_meeting_uuid: meetingUuid ?? null,
+    zoom_poll_id: polls.id ?? null,
+    poll_title: polls.title ?? null,
+    status: polls.status ?? null,
+    anonymous: Boolean(polls.anonymous),
+    poll_type: polls.poll_type ?? null,
+    questions,
+    responses: polls.responses ?? null,
+  }
+
+  const { error } = await supabaseAdmin
+    .from('class_polls')
+    .upsert(row, { onConflict: 'class_session_id,zoom_poll_id' })
+  if (error) console.warn('class_polls upsert:', error.message)
+}
+
+/**
+ * Fetch the Zoom report for the meeting and store a snapshot.
+ */
+async function syncReportForSession(classSessionId, zoomMeetingId, meetingUuid) {
+  if (!zoomMeetingId && !meetingUuid) return
+  try {
+    const [report, participants] = await Promise.all([
+      getMeetingReport(String(zoomMeetingId || meetingUuid)),
+      getMeetingParticipants(String(zoomMeetingId || meetingUuid)),
+    ])
+
+    const row = {
+      class_session_id: classSessionId,
+      zoom_meeting_id: zoomMeetingId ? String(zoomMeetingId) : null,
+      zoom_meeting_uuid: meetingUuid ?? null,
+      start_time: report?.start_time ?? null,
+      end_time: report?.end_time ?? null,
+      duration_minutes: report?.duration ?? null,
+      participants_count: report?.participants_count ?? participants.length ?? null,
+      unique_participants: new Set(
+        participants.map((p) => (p.user_email || p.id || '').toLowerCase()).filter(Boolean),
+      ).size,
+      raw: { report, participants },
+    }
+
+    const { error } = await supabaseAdmin
+      .from('class_reports')
+      .upsert(row, { onConflict: 'class_session_id' })
+    if (error) console.warn('class_reports upsert:', error.message)
+  } catch (error) {
+    console.warn('syncReportForSession failed:', error.message)
+  }
+}
+
+/**
+ * Insert a single live chat message captured via webhook.
+ */
+async function insertLiveChatMessage(classSessionId, payload) {
+  const obj = payload?.payload?.object
+  if (!obj) return
+  const row = {
+    class_session_id: classSessionId,
+    zoom_meeting_id: obj.id ? String(obj.id) : null,
+    zoom_meeting_uuid: obj.uuid ?? null,
+    sender_name: obj.participant?.user_name ?? null,
+    sender_email: obj.participant?.email ?? null,
+    sender_zoom_user_id: obj.participant?.user_id ?? null,
+    message_text: obj.message ?? obj.content ?? '',
+    sent_at: obj.date_time ?? new Date(payload.event_ts ?? Date.now()).toISOString(),
+    source: 'webhook_live',
+  }
+  if (!row.message_text) return
+  const { error } = await supabaseAdmin.from('class_chat_messages').insert(row)
+  if (error) console.warn('class_chat_messages insert (live):', error.message)
 }
 
 export async function processZoomWebhookEvent(event, body, signatureValid) {
@@ -283,6 +420,15 @@ export async function processZoomWebhookEvent(event, body, signatureValid) {
       classSession.trainer_id ?? null,
       classSession.zoom_host_user_id ?? null,
     )
+    // Pull polls + engagement report (best effort — wait briefly for Zoom to finalize)
+    setTimeout(() => {
+      syncPollsForSession(classSession.id, meetingId, meetingUuid).catch((e) =>
+        console.warn('syncPollsForSession async:', e.message),
+      )
+      syncReportForSession(classSession.id, meetingId, meetingUuid).catch((e) =>
+        console.warn('syncReportForSession async:', e.message),
+      )
+    }, 60_000).unref?.()
   }
 
   if (event === 'recording.completed') {
@@ -291,5 +437,9 @@ export async function processZoomWebhookEvent(event, body, signatureValid) {
       String(meetingId ?? classSession.zoom_meeting_id ?? ''),
       body?.payload?.object ?? null,
     )
+  }
+
+  if (event === 'meeting.chat_message_sent') {
+    await insertLiveChatMessage(classSession.id, body)
   }
 }

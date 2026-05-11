@@ -24,6 +24,7 @@ import {
   MessageSquare,
   MoreVertical,
   LogOut,
+  Menu,
   Megaphone,
   PlayCircle,
   Play,
@@ -44,7 +45,6 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getBackendOrigin } from '../lib/backendOrigin'
-import { getJoinUrl } from '../lib/zoomApi'
 import { BatchCommunityChat } from '../components/BatchCommunityChat/BatchCommunityChat'
 
 type HomePageProps = {
@@ -216,6 +216,9 @@ export function HomePage({ session }: HomePageProps) {
   const firstName = displayName?.split(' ')[0] ?? 'Student'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  // Auto-close mobile drawer on route change
+  useEffect(() => { setMobileNavOpen(false) }, [location.pathname])
   const [studentId, setStudentId] = useState<string | null>(null)
   const [allClasses, setAllClasses] = useState<ClassSessionItem[]>([])
   const [todayClasses, setTodayClasses] = useState<ClassSessionItem[]>([])
@@ -269,7 +272,7 @@ export function HomePage({ session }: HomePageProps) {
   const resumeInputRef = useRef<HTMLInputElement | null>(null)
   const [assignmentSubmitError, setAssignmentSubmitError] = useState('')
   const [assignmentSubmitSuccess, setAssignmentSubmitSuccess] = useState('')
-  const [joinBusyMeetingId, setJoinBusyMeetingId] = useState<string | null>(null)
+  const [joinBusyMeetingId] = useState<string | null>(null)
   const [openReactionAnnouncementId, setOpenReactionAnnouncementId] = useState<string | null>(null)
   const [announcementsLastSeenAt, setAnnouncementsLastSeenAt] = useState<string | null>(null)
   const [communityLastSeenAt, setCommunityLastSeenAt] = useState<string | null>(null)
@@ -1509,13 +1512,6 @@ export function HomePage({ session }: HomePageProps) {
     window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank', 'noopener,noreferrer')
   }
 
-  const openInNewTab = (url: string) => {
-    const popup = window.open(url, '_blank', 'noopener,noreferrer')
-    if (!popup) {
-      window.location.href = url
-    }
-  }
-
   const handleJoinClass = async (item: ClassSessionItem | null) => {
     if (!item) return
 
@@ -1524,21 +1520,10 @@ export function HomePage({ session }: HomePageProps) {
       return
     }
 
-    try {
-      setError('')
-      setJoinBusyMeetingId(item.zoom_meeting_id)
-      const data = await getJoinUrl(item.zoom_meeting_id)
-      if (data.join_url) {
-        openInNewTab(data.join_url)
-      } else {
-        setError('Unique join URL is not available for this class yet.')
-      }
-    } catch (joinError) {
-      setError(joinError instanceof Error ? joinError.message : 'Unable to fetch join URL.')
-    } finally {
-      setJoinBusyMeetingId(null)
-    }
+    // Navigate to the embedded LiveClass page. SDK loads + signs JWT there.
+    navigate(`/classes/${item.id}/live`)
   }
+
 
   useEffect(() => {
     setAssignmentPage((prev) => Math.min(Math.max(1, prev), assignmentTotalPages))
@@ -1752,9 +1737,26 @@ export function HomePage({ session }: HomePageProps) {
   }
 
   return (
-    <main className={`student-layout ${isBatchWorkspaceView ? 'admin-batch-workspace-shell' : ''}`}>
-      {!isBatchWorkspaceView ? (
-      <aside className="student-sidebar admin-ds-sidebar">
+    <main className={`student-layout ${isBatchWorkspaceView ? 'admin-batch-workspace-shell' : ''} ${mobileNavOpen ? 'mobile-nav-open' : ''}`}>
+      <button
+        type="button"
+        className="mobile-menu-btn mobile-menu-fab"
+        aria-label="Open menu"
+        onClick={() => setMobileNavOpen(true)}
+      >
+        <Menu size={20} />
+      </button>
+      <div className="mobile-nav-backdrop" onClick={() => setMobileNavOpen(false)} />
+      <aside
+        className={`student-sidebar admin-ds-sidebar ${isBatchWorkspaceView ? 'is-workspace-hidden' : ''}`}
+        onClick={(e) => {
+          // Close drawer when a sidebar button is clicked (any nav action)
+          const target = e.target as HTMLElement
+          if (target.closest('.sidebar-item') || target.closest('.sidebar-user')) {
+            setMobileNavOpen(false)
+          }
+        }}
+      >
         <div>
           <div className="brand">
             <img src="/sit-logo.png" alt="SIT logo" className="brand-logo" />
@@ -1837,7 +1839,6 @@ export function HomePage({ session }: HomePageProps) {
           <LogOut size={14} />
         </button>
       </aside>
-      ) : null}
 
       <section className={`student-content student-v2-content ${isBatchWorkspaceView ? 'admin-batch-workspace-content' : ''} ${studentView === 'dashboard' || studentView === 'batches-list' || studentView === 'my-classes' || studentView === 'my-assignments' || studentView === 'my-announcements' || studentView === 'my-profile' ? 'spx-student-dash' : ''}`}>
         {studentView === 'batches-list' ? (
@@ -2367,11 +2368,19 @@ export function HomePage({ session }: HomePageProps) {
                       if (!file && !textVal) return
                       let fileUrl: string | null = null
                       if (file) {
-                        const path = `submissions/${session.user.id}/${activeAssignment.id}/${file.name}`
-                        const { error: uploadError } = await supabase.storage.from('assignments').upload(path, file, { upsert: true })
-                        if (!uploadError) {
-                          const { data: urlData } = supabase.storage.from('assignments').getPublicUrl(path)
-                          fileUrl = urlData?.publicUrl ?? null
+                        const fd = new FormData()
+                        fd.append('file', file)
+                        fd.append('folder', 'assignments')
+                        fd.append('path', `submissions/${session.user.id}/${activeAssignment.id}`)
+                        const tok = (await supabase.auth.getSession()).data.session?.access_token
+                        const upRes = await fetch(`${getBackendOrigin()}/api/upload`, {
+                          method: 'POST',
+                          headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+                          body: fd,
+                        })
+                        if (upRes.ok) {
+                          const upBody = await upRes.json()
+                          fileUrl = upBody.url ?? null
                         }
                       }
                       await supabase.from('assignment_submissions').upsert(
@@ -2640,6 +2649,19 @@ export function HomePage({ session }: HomePageProps) {
           </section>
         ) : studentView === 'batch-detail' ? (
           <section className="student-batch-detail-page student-batch-detail-revamp">
+            <header className="student-v2-topbar">
+              <h2>{selectedBatch?.batch_code ?? 'Batch'}</h2>
+              <div className="student-v2-top-actions">
+                <label className="student-v2-search">
+                  <Search size={14} />
+                  <input placeholder="Search..." />
+                </label>
+                <button type="button" className="student-v2-icon-btn">
+                  <Bell size={16} />
+                </button>
+                <div className="student-v2-avatar">{firstName[0]?.toUpperCase()}</div>
+              </div>
+            </header>
             <aside className="admin-batch-detail-left">
               <button type="button" className="batch-detail-back admin-batch-detail-back" onClick={() => navigate('/home')}>
                 ← Back to Dashboard

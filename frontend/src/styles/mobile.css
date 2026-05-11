@@ -1,0 +1,1065 @@
+/* ============================================================
+   SIT LMS — MOBILE DESIGN SYSTEM
+   ============================================================
+   Loaded AFTER App.css so these rules win at narrow widths.
+
+   DESIGN RULES
+   ------------
+   Breakpoints
+     Mobile        ≤ 640 px
+     Phablet       641–768 px
+     Tablet        769–1024 px
+     Desktop       > 1024 px
+
+   Touch targets    44 × 44 px minimum, 48 px for primary CTAs
+   Body font        16 px (prevents iOS auto-zoom on inputs)
+   Small text       14 px
+   Heading scale    H1 24–28, H2 20–22, H3 18, H4 16
+   Inputs           16 px font-size, 44 px tall, full-width
+
+   Page padding     16 px (mobile) | 24 px (phablet) | 32+ (tablet/desktop)
+   Card gap         12–16 px on mobile vs 20–24 on desktop
+   Section gap      16–20 px
+
+   Layout rules
+     • Two-column grids collapse to single column ≤ 768 px
+     • Sidebar hides ≤ 1024 px → opens as a left drawer with backdrop
+     • Tables become horizontally scrollable on mobile
+     • Modals become full-height sheets ≤ 640 px
+   ============================================================ */
+
+/* Prevent text size adjust on rotation, allow zoom but no auto-scaling */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Lock viewport width without breaking sticky positioning.
+   `overflow-x: clip` is the modern non-scrolling clip that does NOT break
+   `position: sticky` on descendants (unlike overflow-x: hidden). */
+html, body {
+  overflow-x: clip;
+  max-width: 100vw;
+  background: #F0EEE9; /* matches topbar so any clipping shows the right color */
+}
+#root {
+  overflow-x: clip;
+  max-width: 100vw;
+}
+
+@media (max-width: 1024px) {
+  /* Lock layout to viewport width — prevent any child from exceeding */
+  .student-layout,
+  .student-content,
+  .student-content.student-v2-content {
+    max-width: 100vw !important;
+    overflow-x: clip !important;
+  }
+  /* Common offenders: pages, grids, sections */
+  .spx-batches-list-page,
+  .spx-my-classes-page,
+  .spx-student-dash,
+  .student-v2-topbar {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  /* Force everything inside to respect width (except topbar + tables — tables get horizontal scroll instead) */
+  .student-content *:not(.student-v2-topbar):not(.student-v2-topbar *):not(table):not(table *) {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────
+     TABLES → horizontal scroll on mobile.
+     Mirror the working approach from .spx-my-classes-page tables.
+     Beat the high-specificity rules in App.css that use
+     `.admin-batch-detail-main .student-classes-table { table-layout: fixed; width: 100% }`.
+     ───────────────────────────────────────────────────────── */
+
+  /* 1. Card wrappers become horizontal scroll containers.
+     They MUST have explicit constrained width (= 100% of parent) so the
+     wider table inside triggers their internal scroll. We use `scroll`
+     (not `auto`) to FORCE the scrollbar to be visible. */
+  .student-content *:has(> table),
+  .admin-batch-detail-main .student-classes-table-card,
+  .student-classes-table-card,
+  .student-classes-table-wrap,
+  .past-table-wrap,
+  .spx-bd-table,
+  .batch-detail-panel,
+  article:has(> table) {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: scroll !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    box-sizing: border-box !important;
+    /* Ensure native scrollbar behavior — override any "scrollbar-width: none" */
+    scrollbar-width: thin !important;
+  }
+
+  /* 2. Tables expand to natural content width — `max-content` forces overflow */
+  .admin-batch-detail-main .student-classes-table,
+  .admin-batch-detail-main table,
+  .student-content table,
+  .student-classes-table,
+  .past-table,
+  table.spx-table {
+    table-layout: auto !important;
+    width: max-content !important;
+    min-width: 100% !important;
+    max-width: none !important;
+    border-collapse: collapse !important;
+  }
+
+  /* 3. Parents must clip horizontally so the PAGE doesn't scroll —
+     only the table-card's inner scroll should activate. */
+  .admin-batch-detail-main,
+  .student-batch-detail-page,
+  .admin-batch-detail-main .batch-detail-panel,
+  .student-batch-tab-content {
+    overflow-x: clip !important;
+    max-width: 100% !important;
+  }
+
+  /* 4. CRITICAL: grid/flex items default to min-width: auto which makes them
+     expand to fit content (the wide table) instead of constraining children.
+     Force min-width: 0 so children can shrink and trigger their own scroll. */
+  .student-batch-tab-content,
+  .student-batch-tab-content > *,
+  .student-batch-classes-tab,
+  .student-batch-classes-tab > *,
+  .admin-batch-detail-main > *,
+  .student-batch-detail-revamp > * {
+    min-width: 0 !important;
+  }
+
+  /* 3. Cells: nowrap + no ellipsis cropping (override App.css overflow:hidden + ellipsis) */
+  .admin-batch-detail-main .student-classes-table th,
+  .admin-batch-detail-main .student-classes-table td,
+  .admin-batch-detail-main table th,
+  .admin-batch-detail-main table td,
+  .student-content th,
+  .student-content td,
+  .student-classes-table th,
+  .student-classes-table td {
+    white-space: nowrap !important;
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+  }
+
+  /* CRITICAL: also unrestrict ALL elements inside cells (the universal max-width:100%
+     rule was matching <p>/<span>/<div> wrappers inside cells, which then squished text). */
+  .student-content table th *,
+  .student-content table td *,
+  .admin-batch-detail-main table th *,
+  .admin-batch-detail-main table td * {
+    max-width: none !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+    word-break: keep-all !important;
+  }
+
+  /* 4. Visible scrollbar (always shown so user knows it's scrollable) */
+  .student-content *:has(> table)::-webkit-scrollbar,
+  .student-classes-table-card::-webkit-scrollbar,
+  .admin-batch-detail-main .student-classes-table-card::-webkit-scrollbar {
+    height: 8px !important;
+    -webkit-appearance: auto;
+  }
+  .student-content *:has(> table)::-webkit-scrollbar-track,
+  .student-classes-table-card::-webkit-scrollbar-track,
+  .admin-batch-detail-main .student-classes-table-card::-webkit-scrollbar-track {
+    background: #F3F4F6 !important;
+    border-radius: 4px;
+  }
+  .student-content *:has(> table)::-webkit-scrollbar-thumb,
+  .student-classes-table-card::-webkit-scrollbar-thumb,
+  .admin-batch-detail-main .student-classes-table-card::-webkit-scrollbar-thumb {
+    background: #9CA3AF !important;
+    border-radius: 4px;
+  }
+}
+
+/* Better tap behavior on mobile */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ============================================================
+   Desktop only — preserve original behavior of hiding the main
+   sidebar in batch workspace mode (we now always render it in JSX
+   so mobile drawer works, but desktop keeps the clean workspace UI).
+   ============================================================ */
+@media (min-width: 1025px) {
+  .student-layout.admin-batch-workspace-shell .student-sidebar.is-workspace-hidden {
+    display: none !important;
+  }
+}
+
+/* ============================================================
+   1024 px and below — Sidebar becomes a drawer
+   ============================================================ */
+@media (max-width: 1024px) {
+  /* The student layout: collapse sidebar */
+  .student-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Sidebar → fixed drawer, hidden by default */
+  .student-sidebar,
+  .student-sidebar.admin-ds-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    z-index: 1000;
+    box-shadow: 2px 0 18px rgba(0, 0, 0, 0.12);
+    overflow-y: auto;
+  }
+
+  /* Drawer open state */
+  body.mobile-nav-open .student-sidebar,
+  .student-layout.mobile-nav-open .student-sidebar {
+    transform: translateX(0);
+  }
+
+  /* Backdrop */
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  body.mobile-nav-open .mobile-nav-backdrop,
+  .student-layout.mobile-nav-open .mobile-nav-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Hamburger button — only visible on mobile */
+  .mobile-menu-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #E8E6E1;
+    background: #fff;
+    border-radius: 12px;
+    cursor: pointer;
+    color: #1F2937;
+    flex-shrink: 0;
+  }
+  .mobile-menu-btn:active {
+    transform: scale(0.96);
+  }
+
+  /* Content area takes full width */
+  .student-content,
+  .student-content.student-v2-content {
+    padding: 0 !important;
+    width: 100%;
+  }
+}
+
+/* Hamburger only ever visible at ≤ 1024 px */
+.mobile-menu-btn {
+  display: none;
+}
+.mobile-nav-backdrop {
+  display: none;
+}
+
+/* Floating hamburger button (top-left) — visible only on mobile */
+.mobile-menu-fab {
+  display: none;
+}
+@media (max-width: 1024px) {
+  .mobile-nav-backdrop {
+    display: block;
+  }
+  .mobile-menu-fab {
+    display: inline-flex !important;
+    position: fixed;
+    top: 8px; /* centers with topbar (height 56px, items center at 28px → FAB top:8 + 40/2 = 28) */
+    left: 12px;
+    z-index: 60; /* above sticky topbar (z:50) */
+    width: 40px;
+    height: 40px;
+    background: #ffffff;
+    border: 1px solid #E8E6E1;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    color: #1F2937;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+  }
+  .mobile-menu-fab:active {
+    transform: scale(0.96);
+  }
+  /* Hide FAB while drawer is open (drawer covers it) */
+  .student-layout.mobile-nav-open .mobile-menu-fab {
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* Push topbar content right so it doesn't overlap the FAB */
+  .student-v2-topbar {
+    padding-left: 56px !important;
+  }
+}
+
+/* Lock body scroll while drawer is open */
+.student-layout.mobile-nav-open {
+  overflow: hidden;
+}
+
+/* ============================================================
+   PHABLET (≤ 768 px) — Single-column collapse
+   ============================================================ */
+@media (max-width: 768px) {
+  /* Outer content reserves space for the fixed topbar (56 px high).
+     Inner pages must NOT add their own top padding (would double-up). */
+  .student-content,
+  .student-content.student-v2-content {
+    padding: 64px 12px 12px !important;
+  }
+  .spx-batches-list-page,
+  .spx-my-classes-page,
+  .spx-student-dash {
+    padding: 0 !important;
+  }
+
+  /* Top bar — fixed to viewport, full width, single row with divider */
+  .student-layout .student-v2-topbar,
+  .spx-student-dash .student-v2-topbar {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 0 12px 0 68px !important; /* 12 (left) + 40 (FAB) + 16 (gap) = 68 */
+    height: 56px !important;
+    min-height: 56px !important;
+    box-sizing: border-box !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    z-index: 50 !important;
+    background: #F0EEE9 !important;
+    border-bottom: 1px solid #E8E6E1 !important;
+    margin: 0 !important;
+  }
+
+  /* Top padding for fixed topbar applied per-breakpoint below */
+  .student-layout .student-v2-topbar h2,
+  .spx-student-dash .student-v2-topbar h2,
+  .student-layout .student-v2-topbar .admin-ds-page-title {
+    font-size: 18px !important;
+    margin: 0 !important;
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: auto !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: #23272F !important;
+    display: block !important;
+  }
+
+  /* Action group → right-aligned single row */
+  .student-layout .student-v2-top-actions,
+  .spx-student-dash .student-v2-top-actions {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
+    width: auto !important;
+  }
+
+  /* Search → icon-only square button (beat .spx-student-dash width:340px) */
+  .student-layout .student-v2-search,
+  .spx-student-dash .student-v2-search {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    max-width: 38px !important;
+    padding: 0 !important;
+    border-radius: 10px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 38px !important;
+    overflow: hidden !important;
+    cursor: pointer !important;
+  }
+  .student-layout .student-v2-search input,
+  .spx-student-dash .student-v2-search input {
+    display: none !important;
+  }
+  .student-layout .student-v2-search svg,
+  .spx-student-dash .student-v2-search svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  /* Topbar action buttons (bell, avatar, search icon) — uniform compact size */
+  .student-layout .student-v2-top-actions > *,
+  .spx-student-dash .student-v2-top-actions > * {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    flex-shrink: 0 !important;
+  }
+  .student-layout .student-v2-top-actions .student-v2-avatar,
+  .spx-student-dash .student-v2-top-actions .student-v2-avatar {
+    font-size: 14px !important;
+  }
+
+  /* Tabs row — horizontal scroll if overflow */
+  .spx-batches-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+  .spx-batches-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .spx-batches-tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Batch grids → 1 column */
+  .spx-batches-grid,
+  .spx-all-batches-grid,
+  .batch-cards-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+
+  /* Batch cards */
+  .spx-batch-card,
+  .spx-enroll-card,
+  .batch-card {
+    width: 100% !important;
+  }
+
+  /* Profile section */
+  .spx-profile-grid,
+  .spx-profile-section {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+  .spx-profile-fields {
+    grid-template-columns: 1fr !important;
+  }
+  .spx-field-lbl {
+    font-size: 13px !important;
+  }
+  .spx-field-val {
+    font-size: 15px !important;
+    word-break: break-word;
+  }
+
+  /* KPI / stat cards stack */
+  .spx-kpi-row,
+  .spx-stat-row,
+  .home-stats-grid,
+  .dashboard-stats {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  .spx-kpi-card,
+  .spx-stat-card {
+    padding: 14px !important;
+  }
+  .spx-kpi-label,
+  .spx-stat-label {
+    font-size: 12px !important;
+  }
+  .spx-kpi-value,
+  .spx-stat-value {
+    font-size: 22px !important;
+  }
+
+  /* Continue Learning / class cards */
+  .spx-continue-card,
+  .schedule-card,
+  .home-card {
+    padding: 16px !important;
+  }
+
+  /* Tables → scroll horizontally */
+  .spx-my-classes-page table,
+  .past-table,
+  table.spx-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+
+  /* Action buttons in class rows — wrap & fit */
+  .spx-class-actions {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .spx-act-join,
+  .spx-act-assignment,
+  .spx-act-calendar,
+  .spx-act-watch {
+    font-size: 13px !important;
+    padding: 8px 12px !important;
+    min-height: 36px !important;
+  }
+
+  /* Section headings */
+  h1, .h1 { font-size: 24px !important; }
+  h2, .h2 { font-size: 20px !important; }
+  h3, .h3 { font-size: 18px !important; }
+  h4, .h4 { font-size: 16px !important; }
+
+  /* Generic .card padding */
+  .card {
+    padding: 16px !important;
+    border-radius: 14px !important;
+  }
+}
+
+/* ============================================================
+   MOBILE (≤ 640 px) — Compact spacing
+   ============================================================ */
+@media (max-width: 640px) {
+  /* Tighter padding on tiny screens (top: 60 = topbar 56 + 4 gap) */
+  .student-content,
+  .student-content.student-v2-content {
+    padding: 60px 8px 8px !important;
+  }
+  .spx-batches-list-page,
+  .spx-my-classes-page,
+  .spx-student-dash {
+    padding: 0 !important;
+  }
+
+  /* No special margin override needed — fixed positioning handles it */
+
+  /* KPIs: stack to 1 col on very small */
+  .spx-kpi-row,
+  .spx-stat-row,
+  .home-stats-grid,
+  .dashboard-stats {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Avatar on profile a bit smaller */
+  .spx-avatar,
+  .spx-avatar-img {
+    width: 96px !important;
+    height: 96px !important;
+  }
+
+  /* Buttons: full-width primary CTAs */
+  .spx-enroll-btn,
+  .spx-primary-btn,
+  .login-submit,
+  .signup-btn-submit,
+  .signup-btn-next,
+  .signup-btn-back {
+    width: 100% !important;
+    min-height: 48px !important;
+    font-size: 15px !important;
+  }
+
+  /* Inputs: 16px font, full width */
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="url"],
+  input[type="number"],
+  input[type="date"],
+  textarea,
+  select {
+    font-size: 16px !important;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+  }
+
+  textarea {
+    min-height: 80px;
+  }
+
+  /* Modals → bottom sheet style */
+  .spx-modal,
+  .modal-overlay > div,
+  .batch-create-modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0 !important;
+    margin: 0 !important;
+    max-height: 92vh !important;
+    overflow-y: auto;
+  }
+  .modal-overlay {
+    align-items: flex-end !important;
+  }
+}
+
+/* ============================================================
+   LOGIN PAGE — Mobile (split layout collapses)
+   ============================================================ */
+@media (max-width: 900px) {
+  .login-split {
+    grid-template-columns: 1fr !important;
+    min-height: 100vh;
+  }
+  .login-left {
+    display: none !important;
+  }
+  .login-right {
+    width: 100%;
+    padding: 24px 20px !important;
+    min-height: 100vh;
+  }
+  .login-form-wrap,
+  .signup-form-wrap {
+    width: 100% !important;
+    max-width: 420px !important;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-right {
+    padding: 20px 16px !important;
+    justify-content: flex-start !important;
+  }
+  .login-logo {
+    width: 56px !important;
+    height: 56px !important;
+    margin-bottom: 12px !important;
+  }
+  .login-heading {
+    font-size: 22px !important;
+  }
+  .login-subheading {
+    font-size: 13px !important;
+  }
+  .login-google-btn {
+    min-height: 46px !important;
+    font-size: 14px !important;
+  }
+  .login-bottom-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+  .login-bottom-row > * {
+    text-align: left !important;
+  }
+}
+
+/* ============================================================
+   SIGNUP PAGE — 3-step form, mobile
+   ============================================================ */
+@media (max-width: 768px) {
+  .signup-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+  .signup-steps {
+    gap: 8px !important;
+  }
+  .signup-step-item.active .signup-step-label {
+    font-size: 12px !important;
+  }
+  .signup-nav-row {
+    flex-direction: row !important;
+    gap: 12px !important;
+  }
+  .signup-nav-row > button {
+    flex: 1;
+  }
+  .signup-file-box,
+  .signup-avatar-pick {
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .signup-step-item:not(.active) .signup-step-label {
+    display: none;
+  }
+  .signup-step-circle {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 13px !important;
+  }
+}
+
+/* ============================================================
+   BATCH WORKSPACE / DETAIL PAGE
+   ============================================================ */
+@media (max-width: 1024px) {
+  .admin-batch-workspace-shell {
+    grid-template-columns: 1fr !important;
+  }
+  .admin-batch-workspace-content {
+    padding: 16px !important;
+  }
+  .admin-batch-detail-tabs,
+  .batch-detail-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+  .admin-batch-detail-tabs::-webkit-scrollbar,
+  .batch-detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-batch-detail-tabs button,
+  .batch-detail-tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-batch-detail-left,
+  .admin-batch-detail-main {
+    width: 100% !important;
+  }
+  .admin-batch-detail-context {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .admin-batch-detail-course-image {
+    width: 100% !important;
+    height: 180px !important;
+  }
+}
+
+/* ============================================================
+   COMMUNITY CHAT — Mobile sizing
+   ============================================================ */
+@media (max-width: 768px) {
+  .batch-community-chat {
+    height: calc(100vh - 200px) !important;
+  }
+  .bcc-message {
+    max-width: 90% !important;
+  }
+  .bcc-input-row {
+    padding: 10px 12px !important;
+  }
+  .bcc-input-row textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ============================================================
+   GLOBAL — Better images, prevent overflow
+   ============================================================ */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 768px) {
+  /* Prevent overflow from long URLs / words */
+  p, span, div, a {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+}
+
+/* ============================================================
+   DASHBOARD KPI CARDS (shared selectors as a safety net)
+   ============================================================ */
+@media (max-width: 768px) {
+  [class*="kpi-grid"],
+  [class*="stats-grid"],
+  [class*="metrics-grid"] {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  [class*="kpi-grid"],
+  [class*="stats-grid"],
+  [class*="metrics-grid"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================================
+   BRAND / LOGO (mobile sidebar)
+   ============================================================ */
+@media (max-width: 1024px) {
+  .student-sidebar .brand,
+  .admin-ds-sidebar .brand {
+    padding: 16px !important;
+  }
+  .student-sidebar .brand-logo,
+  .admin-ds-sidebar .brand-logo {
+    width: 36px !important;
+    height: 36px !important;
+  }
+}
+
+/* ============================================================
+   MOBILE TAB SELECTOR — pill button + bottom sheet
+   ============================================================ */
+
+/* Hidden by default (desktop) */
+.mobile-tab-selector {
+  display: none;
+}
+.mts-sheet-backdrop {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  /* Force beige background on all student layout pages (no white strips) */
+  .student-layout,
+  .student-content,
+  .student-batch-detail-page,
+  .admin-batch-workspace-content {
+    background: #F0EEE9 !important;
+  }
+
+  /* Mobile pill selector — disabled. We keep the horizontal tabs visible. */
+  .mobile-tab-selector,
+  .mts-sheet-backdrop {
+    display: none !important;
+  }
+
+  /* Hide admin batch detail's own internal sidebar (.admin-batch-detail-left) */
+  .admin-batch-detail-left {
+    display: none !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────
+     Mobile tabs — simple horizontal scrollable rows
+     ───────────────────────────────────────────────────────── */
+  nav.batch-detail-tabs,
+  nav.admin-batch-detail-tabs,
+  .spx-tabs {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+    margin: 0 0 8px 0 !important;
+  }
+  nav.batch-detail-tabs::-webkit-scrollbar,
+  nav.admin-batch-detail-tabs::-webkit-scrollbar,
+  .spx-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .batch-detail-tab,
+  .spx-tab {
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  /* Reduce top spacing above the tabs */
+  .admin-batch-detail-main {
+    padding-top: 0 !important;
+  }
+
+  /* Show pill selector */
+  .mobile-tab-selector {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 16px;
+    background: #ffffff;
+    border: 1px solid #E8E6E1;
+    border-radius: 12px;
+    color: #1F2937;
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 14px 0;
+    box-sizing: border-box;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-tab-selector:active {
+    background: #F9F8F5;
+  }
+  .mts-current {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .mts-current svg {
+    color: #6366F1;
+    flex-shrink: 0;
+  }
+  .mts-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mts-total-badge {
+    background: #EF4444;
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 6px;
+  }
+
+  /* Bottom sheet */
+  .mts-sheet-backdrop {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 200;
+    align-items: flex-end;
+    justify-content: center;
+    animation: mts-fade-in 0.18s ease;
+  }
+  .mts-sheet {
+    background: #ffffff;
+    width: 100%;
+    max-height: 80vh;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 32px rgba(15, 23, 42, 0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: mts-slide-up 0.22s ease;
+  }
+  .mts-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid #E8E6E1;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6B7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .mts-sheet-close {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: #F3F4F6;
+    color: #1F2937;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .mts-sheet-list {
+    list-style: none;
+    margin: 0;
+    padding: 6px 0 14px;
+    overflow-y: auto;
+  }
+  .mts-sheet-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border: none;
+    background: transparent;
+    color: #1F2937;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mts-sheet-item:active {
+    background: #F9F8F5;
+  }
+  .mts-sheet-item.is-active {
+    background: #EEF2FF;
+    color: #4338CA;
+    font-weight: 600;
+  }
+  .mts-sheet-item.is-active svg:last-child {
+    color: #4338CA;
+  }
+  .mts-sheet-item-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .mts-sheet-item-left svg {
+    color: #6366F1;
+    flex-shrink: 0;
+  }
+  .mts-sheet-item.is-active .mts-sheet-item-left svg:first-child {
+    color: #4338CA;
+  }
+  .mts-sheet-item-badge {
+    background: #EF4444;
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 6px;
+  }
+
+  @keyframes mts-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes mts-slide-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  /* Batch workspace shell — make admin batch detail single-column on mobile */
+  .admin-batch-workspace-shell {
+    grid-template-columns: 1fr !important;
+    display: block !important;
+  }
+  .admin-batch-detail-main {
+    width: 100% !important;
+  }
+}
+
+/* ============================================================
+   END
+   ============================================================ */
